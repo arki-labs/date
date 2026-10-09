@@ -1,6 +1,6 @@
 # @arki/date
 
-Published version: **0.0.3**
+Published version: **0.1.0**
 
 This repository is a **read-only mirror** of the [@arki/date](https://www.npmjs.com/package/@arki/date) npm package.
 
