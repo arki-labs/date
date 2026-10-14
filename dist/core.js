@@ -3,6 +3,8 @@
  * throws `RangeError` on bad input rather than returning an "invalid" value.
  * Use `tryParse` when a failure is expected (user input).
  */
+import { readCommonISO, readLenientISO } from './internal/iso.js';
+import { systemTimeZone } from './internal/system-zone.js';
 import { isInstant, isPlainDate, isPlainDateTime, isZonedDateTime, Temporal } from './types.js';
 const DATE_ONLY = /^[+-]?\d{4,6}-\d{2}-\d{2}$/;
 const HAS_OFFSET_OR_ZONE = /(?:z|[+-]\d{2}(?::?\d{2})?|\[[^\]]+\])$/i;
@@ -54,13 +56,24 @@ export function instant(input) {
     return input.toInstant();
 }
 export function zoned(input, timeZoneOrOptions, maybeOptions) {
+    if (typeof timeZoneOrOptions === 'string' && (typeof input === 'string' || isZonedDateTime(input))) {
+        // Explicit zone: an exact string/zoned value is projected into it; a
+        // zone-less wall-clock string is read as local time in that zone.
+        const timeZone = timeZoneOrOptions;
+        if (isZonedDateTime(input))
+            return input.withTimeZone(timeZone);
+        if (HAS_ZONE_ANNOTATION.test(input))
+            return Temporal.ZonedDateTime.from(input, maybeOptions).withTimeZone(timeZone);
+        if (HAS_OFFSET_OR_ZONE.test(input))
+            return Temporal.Instant.from(input).toZonedDateTimeISO(timeZone);
+        return Temporal.PlainDateTime.from(input).toZonedDateTime(timeZone, maybeOptions);
+    }
     if (typeof input === 'string' || isZonedDateTime(input)) {
-        const options = typeof timeZoneOrOptions === 'string' ? maybeOptions : timeZoneOrOptions;
         if (typeof input === 'string') {
             if (!HAS_ZONE_ANNOTATION.test(input)) {
-                throw new RangeError(`zoned() expects an ISO string with a [TimeZone] annotation, received "${input}". Pass the zone as the second argument to project an instant.`);
+                throw new RangeError(`zoned() needs a zone for "${input}": either a [TimeZone] annotation in the string or a second argument, e.g. zoned(text, 'Europe/Bucharest')`);
             }
-            return Temporal.ZonedDateTime.from(input, options);
+            return Temporal.ZonedDateTime.from(input, typeof timeZoneOrOptions === 'string' ? undefined : timeZoneOrOptions);
         }
         return input;
     }
@@ -111,6 +124,27 @@ export function toPlainDate(value) {
 export function toISO(value) {
     return value.toString();
 }
+/**
+ * Read lenient ISO 8601 text — everything `instant()` accepts plus the forms
+ * people actually send: `2026-05-20` (midnight), `2026-05`, `2026`, basic
+ * `20260520T1030`, week dates `2026-W41-5`, ordinal dates `2026-283`, a
+ * fraction on the last time unit, `24:00`, `±HH` offsets.
+ *
+ * Text without an offset is a wall-clock reading in `options.timeZone`
+ * (default: the runtime zone), resolved with the `'compatible'` DST rule.
+ * Anything else is a `RangeError`. For strict RFC 9557 text use `instant()`
+ * or `zoned()`; for a calendar date use `plainDate()`.
+ */
+export function parseISO(text, options) {
+    const zone = () => options?.timeZone ?? systemTimeZone();
+    const epochMs = readCommonISO(text, zone);
+    if (epochMs !== undefined)
+        return Temporal.Instant.fromEpochMilliseconds(epochMs);
+    const result = readLenientISO(text, zone());
+    if (result === undefined)
+        throw new RangeError(`parseISO: "${text}" is not ISO 8601 date/time text`);
+    return result;
+}
 /** Parse without throwing. The `kind` is explicit so a string is never reinterpreted. */
 export function tryParse(text, kind) {
     try {
@@ -127,6 +161,7 @@ function parseKind(text, kind) {
         zoned: input => zoned(input),
         instant,
         duration: input => Temporal.Duration.from(input),
+        iso: input => parseISO(input),
     };
     return parsers[kind](text);
 }

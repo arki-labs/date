@@ -13,13 +13,14 @@
  *   they would produce more than `maxItems` values (default 10 000). They never
  *   truncate silently.
  */
-import { toDuration } from './internal/amount.js';
-import { assertSameKind } from './internal/kind.js';
-import { add, diff, internal, nextBoundary } from './math.js';
-import { isPlainDate, isPoint, Temporal } from './types.js';
+import { toDurationInput } from './internal/amount.js';
+import { assertSameKind, sameKind } from './internal/kind.js';
+import { addPoint, comparePoints } from './internal/point.js';
+import { diff, nextBoundary } from './math.js';
+import { isPlainDate, isPoint } from './types.js';
 const DEFAULT_MAX_ITEMS = 10_000;
 function cmp(a, b) {
-    return internal.comparePoints(a, b);
+    return comparePoints(a, b);
 }
 /** Build an interval whose ends are already known to be ordered. */
 function make(start, end) {
@@ -31,9 +32,9 @@ function earlier(a, b) {
 function later(a, b) {
     return cmp(a, b) >= 0 ? a : b;
 }
-/** The smallest step of a kind: one day for a `PlainDate`, one nanosecond otherwise. */
-function smallestStep(value) {
-    return Temporal.Duration.from(isPlainDate(value) ? { days: 1 } : { nanoseconds: 1 });
+/** `value` moved by the smallest step of its kind: one day for a `PlainDate`, one nanosecond otherwise. */
+function bump(value) {
+    return sameKind(value, addPoint(value, isPlainDate(value) ? { days: 1 } : { nanoseconds: 1 }));
 }
 function assertSameIntervalKind(a, b, operation) {
     assertSameKind(a.start, b.start, operation);
@@ -50,8 +51,8 @@ function assertSameIntervalKind(a, b, operation) {
 export function interval(start, end, options) {
     assertSameKind(start, end, 'interval');
     const bounds = options?.bounds ?? '[)';
-    const first = bounds.startsWith('(') ? add(start, smallestStep(start)) : start;
-    const last = bounds.endsWith(']') ? add(end, smallestStep(end)) : end;
+    const first = bounds.startsWith('(') ? bump(start) : start;
+    const last = bounds.endsWith(']') ? bump(end) : end;
     if (cmp(first, last) > 0) {
         throw new RangeError(`interval: start ${first.toString()} is after end ${last.toString()}`);
     }
@@ -243,19 +244,17 @@ function assertStep(step, operation) {
     if (!progress)
         throw new RangeError(`${operation}: the step needs at least one nonzero field`);
 }
-function scaleStep(step, factor) {
-    const scaled = {};
-    for (const field of AMOUNT_FIELDS) {
-        const value = step[field];
-        if (value !== undefined)
-            scaled[field] = value * factor;
-    }
-    return scaled;
-}
 function* anchoredValues(i, step, limit, operation) {
+    const active = AMOUNT_FIELDS.filter(field => (step[field] ?? 0) !== 0);
+    const scaled = (n) => {
+        const amount = {};
+        for (const field of active)
+            amount[field] = (step[field] ?? 0) * n;
+        return amount;
+    };
     let previous;
     for (let n = 0;; n++) {
-        const value = add(i.start, toDuration(scaleStep(step, n)));
+        const value = sameKind(i.start, addPoint(i.start, toDurationInput(scaled(n))));
         if (cmp(value, i.end) >= 0)
             return;
         if (previous !== undefined && cmp(value, previous) <= 0) {

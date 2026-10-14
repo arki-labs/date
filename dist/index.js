@@ -9,8 +9,8 @@ export * from './duration.js';
 export * from './interval.js';
 export * from './business.js';
 export * from './format.js';
+export * from './parse.js';
 export * from './relative.js';
 export * from './clock.js';
 export * from './fluent.js';
-export { parseISO } from './parseISO.js';
 //# sourceMappingURL=index.js.map

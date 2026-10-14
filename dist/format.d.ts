@@ -42,8 +42,6 @@ export type FormatIntlOptions = Readonly<Intl.DateTimeFormatOptions> & FormatOpt
  * throw `RangeError`.
  */
 export declare function format(value: Point | Date, pattern: string, options?: FormatOptions): string;
-/** `May 20, 2026` — `format(value, 'LLL dd, y')`, the legacy `@arki/date/format` helper. */
-export declare function toHumanReadableDate(value: Point | Date, options?: FormatOptions): string;
 /** ISO 8601 / RFC 9557 text: the value's `toString()` (`2026-05-20`, `PT1H30M`, `…+03:00[Europe/Bucharest]`). */
 export declare function formatISO(value: Point | Duration): string;
 /**
@@ -57,4 +55,11 @@ export declare function formatISO(value: Point | Duration): string;
  * A `timeZone` option on a `PlainDate`/`PlainDateTime` throws.
  */
 export declare function formatIntl(value: Point | Date, options?: FormatIntlOptions): string;
+/**
+ * Locale text for a span, through `Intl.DateTimeFormat#formatRange`:
+ * `formatRange(plainDate('2026-05-20'), plainDate('2026-05-24'), { dateStyle: 'medium' })`
+ * → `May 20 – 24, 2026`. Both ends follow the same rules as `formatIntl`
+ * and must be the same kind of value; the end may precede the start.
+ */
+export declare function formatRange(start: Point | Date, end: Point | Date, options?: FormatIntlOptions): string;
 //# sourceMappingURL=format.d.ts.map

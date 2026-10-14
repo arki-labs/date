@@ -9,15 +9,18 @@
  */
 import type { Clock } from '@arki/clock';
 import type { Instant, PlainDate, Point, Timeline, WeekRules, ZonedDateTime } from './types.js';
-/** The current instant. */
-export declare function now(clock?: Clock): Instant;
-/** The current moment in a zone (runtime zone by default). */
-export declare function nowIn(timeZone?: string, clock?: Clock): ZonedDateTime;
-export type CurrentOptions = Readonly<{
-    timeZone?: string;
+/** Which clock to read. Default: the system clock. */
+export type ClockOptions = Readonly<{
     clock?: Clock;
+}>;
+export type CurrentOptions = ClockOptions & Readonly<{
+    timeZone?: string;
     week?: WeekRules;
 }>;
+/** The current instant. */
+export declare function now(options?: ClockOptions): Instant;
+/** The current moment in a zone (runtime zone by default). */
+export declare function nowIn(options?: CurrentOptions): ZonedDateTime;
 /** Today's calendar date in a zone (runtime zone by default). */
 export declare function today(options?: CurrentOptions): PlainDate;
 export declare function isToday(value: Point, options?: CurrentOptions): boolean;
@@ -27,7 +30,7 @@ export declare function isThisWeek(value: Point, options?: CurrentOptions): bool
 export declare function isThisMonth(value: Point, options?: CurrentOptions): boolean;
 export declare function isThisYear(value: Point, options?: CurrentOptions): boolean;
 /** Strictly before now. */
-export declare function isPast(value: Timeline | Date, clock?: Clock): boolean;
+export declare function isPast(value: Timeline | Date, options?: ClockOptions): boolean;
 /** Strictly after now. */
-export declare function isFuture(value: Timeline | Date, clock?: Clock): boolean;
+export declare function isFuture(value: Timeline | Date, options?: ClockOptions): boolean;
 //# sourceMappingURL=clock.d.ts.map

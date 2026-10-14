@@ -36,4 +36,27 @@ export type AgeOptions = Readonly<{
 }>;
 /** Completed years between a birth date and `asOf`. Throws if `asOf` is before the birth date. */
 export declare function age(birthDate: PlainDate, asOf: PlainDate, options?: AgeOptions): number;
+/**
+ * The n-th `weekday` of a month: `nthWeekdayOfMonth(2026, 5, 2, 5)` is the
+ * second Friday of May 2026. Negative `n` counts from the end (`-1` = last).
+ * A `RangeError` when the month has no such day (a fifth Monday, say).
+ */
+export declare function nthWeekdayOfMonth(year: number, month: number, n: number, weekday: Weekday): PlainDate;
+/** The last `weekday` of a month: `nthWeekdayOfMonth(year, month, -1, weekday)`. */
+export declare function lastWeekdayOfMonth(year: number, month: number, weekday: Weekday): PlainDate;
+/** `'western'` (Gregorian computus) or `'orthodox'` (Julian computus, shown on the ISO calendar). */
+export type EasterRite = 'western' | 'orthodox';
+/**
+ * Easter Sunday of a year. `'western'` is the Gregorian computus (Meeus/
+ * Jones/Butcher); `'orthodox'` is the Julian computus (Meeus) converted to the
+ * ISO calendar, so both results are dates you can compare and add to directly.
+ * Movable feasts are offsets: Good Friday is `-2` days, Pentecost `+49`.
+ */
+export declare function easter(year: number, rite?: EasterRite): PlainDate;
+/**
+ * The week rules a locale uses, from `Intl.Locale` week info (`en-US` →
+ * Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week
+ * info (Node ≤ 22, Hermes) get `fallback`, ISO weeks by default.
+ */
+export declare function weekRulesFor(locale: string, fallback?: WeekRules): WeekRules;
 //# sourceMappingURL=calendar.d.ts.map

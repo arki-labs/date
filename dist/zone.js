@@ -7,6 +7,13 @@ import { instant, plainDateTime } from './core.js';
 import { Temporal } from './types.js';
 /** The same instant, shown in another zone. */
 export function inZone(value, timeZone) {
+    // A Date goes straight to its ZonedDateTime, without an intermediate Instant.
+    if (value instanceof Date) {
+        const ms = value.getTime();
+        if (Number.isNaN(ms))
+            throw new RangeError('instant() received an invalid Date');
+        return new Temporal.ZonedDateTime(BigInt(ms) * 1000000n, timeZone);
+    }
     return instant(value).toZonedDateTimeISO(timeZone);
 }
 /** The same instant in UTC. */

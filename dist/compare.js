@@ -4,10 +4,12 @@
  * `TypeError`. Ordering of zoned values compares instants; equality also
  * compares the zone.
  */
-import { instant } from './core.js';
+import { instant, plainDate } from './core.js';
+import { bucketStart, epochDaysOf } from './internal/buckets.js';
 import { assertSameKind } from './internal/kind.js';
-import { internal, startOf } from './math.js';
-import { isInstant, isPlainDate, isPlainDateTime, isZonedDateTime } from './types.js';
+import { comparePoints, isCalendarUnit } from './internal/point.js';
+import { startOf } from './math.js';
+import { isInstant, ISO_WEEK, isPlainDate, isPlainDateTime, isZonedDateTime } from './types.js';
 function equalsPoint(a, b) {
     assertSameKind(a, b, 'equals');
     if (isPlainDate(a) && isPlainDate(b))
@@ -33,22 +35,22 @@ function sign(n) {
 }
 /** `-1` when `a` is earlier, `1` when later, `0` when equal. Usable directly as an `Array#sort` comparator. */
 export function compareAsc(a, b) {
-    return sign(internal.comparePoints(a, b));
+    return sign(comparePoints(a, b));
 }
 export function compareDesc(a, b) {
-    return sign(internal.comparePoints(b, a));
+    return sign(comparePoints(b, a));
 }
 export function isBefore(a, b) {
-    return internal.comparePoints(a, b) < 0;
+    return comparePoints(a, b) < 0;
 }
 export function isAfter(a, b) {
-    return internal.comparePoints(a, b) > 0;
+    return comparePoints(a, b) > 0;
 }
 export function isSameOrBefore(a, b) {
-    return internal.comparePoints(a, b) <= 0;
+    return comparePoints(a, b) <= 0;
 }
 export function isSameOrAfter(a, b) {
-    return internal.comparePoints(a, b) >= 0;
+    return comparePoints(a, b) >= 0;
 }
 function toBucketable(value, timeZone, unit) {
     if (isInstant(value)) {
@@ -60,14 +62,41 @@ function toBucketable(value, timeZone, unit) {
         return value.withTimeZone(timeZone);
     return value;
 }
-/** Do both values fall in the same calendar unit (day, ISO week, month, quarter, year, hour…)? */
+/**
+ * Calendar buckets compared as integer day counts. `undefined` (Temporal then
+ * decides, and raises its errors) for instants without a zone, zoned values in
+ * different zones without a `timeZone` option, and non-ISO calendars.
+ */
+function sameBucket(a, b, unit, options) {
+    const zone = options?.timeZone;
+    if (zone === undefined && isZonedDateTime(a) && isZonedDateTime(b) && a.timeZoneId !== b.timeZoneId)
+        return undefined;
+    const left = epochDaysOf(a, zone);
+    const right = epochDaysOf(b, zone);
+    if (left === undefined || right === undefined)
+        return undefined;
+    const rules = options?.week ?? ISO_WEEK;
+    return bucketStart(left, unit, rules) === bucketStart(right, unit, rules);
+}
 export function isSame(a, b, unit, options) {
     assertSameKind(a, b, 'isSame');
+    if (isCalendarUnit(unit)) {
+        const fast = sameBucket(a, b, unit, options);
+        if (fast !== undefined)
+            return fast;
+    }
     const left = toBucketable(a, options?.timeZone, unit);
     const right = toBucketable(b, options?.timeZone, unit);
     if (isZonedDateTime(left) && isZonedDateTime(right) && left.timeZoneId !== right.timeZoneId) {
         throw new TypeError(`isSame(${unit}) across zones ${left.timeZoneId} and ${right.timeZoneId} needs an explicit timeZone option`);
     }
+    if (isCalendarUnit(unit)) {
+        // Calendar buckets depend only on the date, and PlainDate boundaries are
+        // far cheaper than rebuilding zoned midnights.
+        return startOf(plainDate(left), unit, options).equals(startOf(plainDate(right), unit, options));
+    }
+    if (isPlainDate(left) || isPlainDate(right))
+        throw new RangeError(`isSame(${unit}) is not defined for a PlainDate`);
     return equalsPoint(startOf(left, unit, options), startOf(right, unit, options));
 }
 export function isSameDay(a, b, options) {
@@ -87,30 +116,30 @@ export function isSameYear(a, b, options) {
 }
 /** Is `value` inside `[start, end)` (or the given `bounds`)? Reversed bounds throw. */
 export function isBetween(value, start, end, options) {
-    if (internal.comparePoints(start, end) > 0)
+    if (comparePoints(start, end) > 0)
         throw new RangeError('isBetween: start is after end');
     const bounds = options?.bounds ?? '[)';
-    const lower = internal.comparePoints(value, start);
-    const upper = internal.comparePoints(value, end);
+    const lower = comparePoints(value, start);
+    const upper = comparePoints(value, end);
     const lowerOk = bounds.startsWith('[') ? lower >= 0 : lower > 0;
     const upperOk = bounds.endsWith(']') ? upper <= 0 : upper < 0;
     return lowerOk && upperOk;
 }
 /** The earliest of the given values (one of the inputs, not a copy). */
 export function min(values) {
-    return values.reduce((best, candidate) => (internal.comparePoints(candidate, best) < 0 ? candidate : best));
+    return values.reduce((best, candidate) => (comparePoints(candidate, best) < 0 ? candidate : best));
 }
 /** The latest of the given values. */
 export function max(values) {
-    return values.reduce((best, candidate) => (internal.comparePoints(candidate, best) > 0 ? candidate : best));
+    return values.reduce((best, candidate) => (comparePoints(candidate, best) > 0 ? candidate : best));
 }
 /** `value` limited to `[minimum, maximum]`. */
 export function clamp(value, minimum, maximum) {
-    if (internal.comparePoints(minimum, maximum) > 0)
+    if (comparePoints(minimum, maximum) > 0)
         throw new RangeError('clamp: minimum is after maximum');
-    if (internal.comparePoints(value, minimum) < 0)
+    if (comparePoints(value, minimum) < 0)
         return minimum;
-    if (internal.comparePoints(value, maximum) > 0)
+    if (comparePoints(value, maximum) > 0)
         return maximum;
     return value;
 }

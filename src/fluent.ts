@@ -13,14 +13,14 @@ import { SystemClock } from '@arki/clock';
 
 import type { BusinessCalendar } from './business.js';
 import type { WeekInfo } from './calendar.js';
-import type { BucketUnitFor, SameOptions } from './compare.js';
-import type { FormatOptions } from './format.js';
+import type { SameOptions } from './compare.js';
+import type { ZonedOptions } from './core.js';
+import type { FormatIntlOptions, FormatOptions } from './format.js';
 import type { ArithmeticOptions, DiffOptions, PartsFor, RoundOptions, SetOptions, UntilOptions } from './math.js';
 import type { RelativeOptions } from './relative.js';
 import type {
   Amount,
   Bounds,
-  Disambiguation,
   Duration,
   Instant,
   PlainDate,
@@ -45,7 +45,14 @@ import {
   quarter,
   weekOf,
 } from './calendar.js';
-import { isFuture as isFutureAt, isPast as isPastAt, now as nowAt, nowIn, today as todayAt } from './clock.js';
+import {
+  isFuture as isFutureAt,
+  isPast as isPastAt,
+  isToday as isTodayAt,
+  now as nowAt,
+  nowIn,
+  today as todayAt,
+} from './clock.js';
 import {
   clamp,
   compareAsc,
@@ -58,7 +65,7 @@ import {
   isSameOrBefore,
   sameInstant,
 } from './compare.js';
-import { instant, plainDate, zoned } from './core.js';
+import { zoned } from './core.js';
 import { format, formatIntl } from './format.js';
 import { systemTimeZone, toDate } from './interop.js';
 import {
@@ -77,7 +84,7 @@ import {
   until,
 } from './math.js';
 import { relative } from './relative.js';
-import { isInstant, ISO_WEEK, isZonedDateTime, Temporal } from './types.js';
+import { ISO_WEEK, isZonedDateTime } from './types.js';
 import { inZone, offset, reinterpretZone } from './zone.js';
 
 export type DateContextOptions = Readonly<{
@@ -95,14 +102,21 @@ export type DateLike = DateValue | ZonedDateTime | Instant | Date | string;
 const DATE_ONLY = /^[+-]?\d{4,6}-\d{2}-\d{2}$/;
 const ZONE_ANNOTATION = /\[[^\]]+\]/;
 
+/**
+ * One rule for every input: a value that already carries a zone keeps it;
+ * everything else (`Instant`, `Date`, exact or wall-clock text) is read in
+ * `timeZone` through `zoned()`.
+ */
 function resolve(input: DateLike, timeZone: string): ZonedDateTime {
   if (input instanceof DateValue) return input.value();
   if (isZonedDateTime(input)) return input;
-  if (isInstant(input) || input instanceof Date) return zoned(input, timeZone);
-  if (DATE_ONLY.test(input)) {
-    throw new RangeError(`date() is for moments; "${input}" is a calendar date — use plainDate() instead`);
+  if (typeof input === 'string') {
+    if (DATE_ONLY.test(input)) {
+      throw new RangeError(`date() is for moments; "${input}" is a calendar date — use plainDate() instead`);
+    }
+    if (ZONE_ANNOTATION.test(input)) return zoned(input);
   }
-  return ZONE_ANNOTATION.test(input) ? zoned(input) : zoned(instant(input), timeZone);
+  return zoned(input, timeZone);
 }
 
 /** An immutable moment in a zone with chainable operations. Create one with `date()`. */
@@ -116,7 +130,11 @@ export class DateValue {
   }
 
   #wrap(value: ZonedDateTime): DateValue {
-    return new DateValue(value, this.#settings);
+    // A zone change (inZone, reinterpretZone, pipe) must travel with the value,
+    // or later DateLike arguments would be resolved in the old zone.
+    const settings =
+      value.timeZoneId === this.#settings.timeZone ? this.#settings : { ...this.#settings, timeZone: value.timeZoneId };
+    return new DateValue(value, settings);
   }
 
   /** The other moment, projected into this value's zone (so calendar comparisons never cross zones). */
@@ -258,7 +276,7 @@ export class DateValue {
   isSameOrAfter(other: DateLike): boolean {
     return isSameOrAfter(this.#value, this.#other(other));
   }
-  isSame(other: DateLike, unit: BucketUnitFor<ZonedDateTime>, options?: SameOptions): boolean {
+  isSame(other: DateLike, unit: Unit, options?: SameOptions): boolean {
     return isSame(this.#value, this.#other(other), unit, { week: this.#settings.week, ...options });
   }
   isSameDay(other: DateLike): boolean {
@@ -283,32 +301,34 @@ export class DateValue {
   // --- relative to the context clock ---------------------------------------
 
   isToday(): boolean {
-    return this.isSameDay(nowIn(this.#value.timeZoneId, this.#settings.clock));
+    return this.isSameDay(nowIn({ timeZone: this.#value.timeZoneId, clock: this.#settings.clock }));
   }
   isTomorrow(): boolean {
-    return this.isSameDay(nowIn(this.#value.timeZoneId, this.#settings.clock).add({ days: 1 }));
+    return this.isSameDay(nowIn({ timeZone: this.#value.timeZoneId, clock: this.#settings.clock }).add({ days: 1 }));
   }
   isYesterday(): boolean {
-    return this.isSameDay(nowIn(this.#value.timeZoneId, this.#settings.clock).subtract({ days: 1 }));
+    return this.isSameDay(
+      nowIn({ timeZone: this.#value.timeZoneId, clock: this.#settings.clock }).subtract({ days: 1 }),
+    );
   }
   isThisWeek(): boolean {
-    return this.isSameWeek(nowIn(this.#value.timeZoneId, this.#settings.clock));
+    return this.isSameWeek(nowIn({ timeZone: this.#value.timeZoneId, clock: this.#settings.clock }));
   }
   isThisMonth(): boolean {
-    return this.isSameMonth(nowIn(this.#value.timeZoneId, this.#settings.clock));
+    return this.isSameMonth(nowIn({ timeZone: this.#value.timeZoneId, clock: this.#settings.clock }));
   }
   isThisYear(): boolean {
-    return this.isSameYear(nowIn(this.#value.timeZoneId, this.#settings.clock));
+    return this.isSameYear(nowIn({ timeZone: this.#value.timeZoneId, clock: this.#settings.clock }));
   }
   isPast(): boolean {
-    return isPastAt(this.#value, this.#settings.clock);
+    return isPastAt(this.#value, this.#settings);
   }
   isFuture(): boolean {
-    return isFutureAt(this.#value, this.#settings.clock);
+    return isFutureAt(this.#value, this.#settings);
   }
   /** "3 days ago" / "in 2 hours" relative to the context clock. */
   fromNow(options?: RelativeOptions): string {
-    return this.relativeTo(nowAt(this.#settings.clock), options);
+    return this.relativeTo(nowAt(this.#settings), options);
   }
 
   // --- calendar -------------------------------------------------------------
@@ -348,7 +368,7 @@ export class DateValue {
     return this.#wrap(inZone(this.#value, timeZone));
   }
   /** Same wall clock, another zone (the instant changes). */
-  reinterpretZone(timeZone: string, options?: Readonly<{ disambiguation?: Disambiguation }>): DateValue {
+  reinterpretZone(timeZone: string, options?: ZonedOptions): DateValue {
     return this.#wrap(reinterpretZone(this.#value, timeZone, options));
   }
   toUTC(): DateValue {
@@ -383,7 +403,7 @@ export class DateValue {
     return format(this.#value, pattern, { locale: this.#settings.locale, ...options });
   }
   /** `Intl.DateTimeFormat` formatting in the context locale. */
-  formatIntl(options?: Intl.DateTimeFormatOptions & FormatOptions): string {
+  formatIntl(options?: FormatIntlOptions): string {
     return formatIntl(this.#value, { locale: this.#settings.locale, ...options });
   }
   /** "3 days ago" / "in 2 hours" relative to `reference`. */
@@ -445,14 +465,11 @@ export function createDateContext(options?: DateContextOptions): DateContext {
   const wrap = (input: DateLike): DateValue => date(input, settings);
   return Object.freeze({
     ...settings,
-    now: () => wrap(nowIn(settings.timeZone, settings.clock)),
+    now: () => wrap(nowIn(settings)),
     today: () => todayAt(settings),
     date: wrap,
-    isToday: (value: Point) => {
-      const target = isInstant(value) ? value.toZonedDateTimeISO(settings.timeZone) : value;
-      return Temporal.PlainDate.compare(plainDate(target), todayAt(settings)) === 0;
-    },
-    isPast: value => isPastAt(value, settings.clock),
-    isFuture: value => isFutureAt(value, settings.clock),
+    isToday: (value: Point) => isTodayAt(value, settings),
+    isPast: value => isPastAt(value, settings),
+    isFuture: value => isFutureAt(value, settings),
   });
 }

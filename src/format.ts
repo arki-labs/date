@@ -18,9 +18,11 @@
  */
 
 import type { Duration, PlainDate, PlainDateTime, Point, ZonedDateTime } from './types.js';
-import { dayOfYear, isoWeek, quarter } from './calendar.js';
 import { toISO } from './core.js';
+import { remember } from './internal/cache.js';
+import { civilFromDays, dayOfYearOf, daysFromCivil, isoWeekOf, MS_PER_DAY, weekdayOfDays } from './internal/civil.js';
 import { dateTimeFormat } from './internal/intl.js';
+import { offsetAt } from './internal/offsets.js';
 import { systemTimeZone } from './interop.js';
 import { isInstant, isPlainDate, isPlainDateTime, isZonedDateTime, Temporal } from './types.js';
 
@@ -63,6 +65,108 @@ function toSubject(value: Point | Date, timeZone: string | undefined, operation:
     throw new RangeError(`${operation}: a ${kindName(value)} has no time zone; drop the timeZone option`);
   }
   return value.withCalendar('iso8601');
+}
+
+/**
+ * What `format` tokens read: plain numbers, computed once per call. Reading
+ * Temporal getters costs tens to hundreds of nanoseconds each, and a `Date` or
+ * `Instant` would first need a ZonedDateTime; the fields come instead from the
+ * epoch and the zone's cached offset.
+ */
+type Fields = Readonly<{
+  kind: 'PlainDate' | 'PlainDateTime' | 'ZonedDateTime';
+  year: number;
+  month: number;
+  day: number;
+  /** ISO weekday, Monday = 1. */
+  dayOfWeek: number;
+  hour: number;
+  minute: number;
+  second: number;
+  /** Nanoseconds within the second. */
+  fraction: number;
+  /** East-positive UTC offset in milliseconds (zoned values only). */
+  offsetMs: number;
+  timeZoneId: string;
+  epochMs: number;
+}>;
+
+function zonedFields(epochMs: number, nanosOfMs: number, timeZoneId: string): Fields {
+  const offsetMs = offsetAt(timeZoneId, epochMs);
+  const wall = epochMs + offsetMs;
+  const days = Math.floor(wall / MS_PER_DAY);
+  const { year, month, day } = civilFromDays(days);
+  const msOfDay = wall - days * MS_PER_DAY;
+  return {
+    kind: 'ZonedDateTime',
+    year,
+    month,
+    day,
+    dayOfWeek: weekdayOfDays(days),
+    hour: Math.floor(msOfDay / 3_600_000),
+    minute: Math.floor(msOfDay / 60_000) % 60,
+    second: Math.floor(msOfDay / 1000) % 60,
+    fraction: (msOfDay % 1000) * 1_000_000 + nanosOfMs,
+    offsetMs,
+    timeZoneId,
+    epochMs,
+  };
+}
+
+/** Epoch milliseconds (floored) and the nanoseconds left within that millisecond. */
+function splitEpoch(value: Temporal.Instant | ZonedDateTime, withNanos: boolean): [number, number] {
+  const epochMs = value.epochMilliseconds;
+  if (!withNanos) return [epochMs, 0];
+  const rest = Number(value.epochNanoseconds - BigInt(epochMs) * 1_000_000n);
+  return rest < 0 ? [epochMs - 1, rest + 1_000_000] : [epochMs, rest];
+}
+
+function plainFields(value: PlainDate | PlainDateTime): Fields {
+  const iso = value.calendarId === 'iso8601' ? value : value.withCalendar('iso8601');
+  const { year, month, day } = iso;
+  const base = {
+    year,
+    month,
+    day,
+    dayOfWeek: weekdayOfDays(daysFromCivil(year, month, day)),
+    offsetMs: 0,
+    timeZoneId: '',
+    epochMs: 0,
+  };
+  if (isPlainDate(iso)) return { ...base, kind: 'PlainDate', hour: 0, minute: 0, second: 0, fraction: 0 };
+  return {
+    ...base,
+    kind: 'PlainDateTime',
+    hour: iso.hour,
+    minute: iso.minute,
+    second: iso.second,
+    fraction: iso.millisecond * 1_000_000 + iso.microsecond * 1000 + iso.nanosecond,
+  };
+}
+
+/** The fields `format` reads, with the same zone rules and errors as `toSubject`. */
+function toFields(value: Point | Date, timeZone: string | undefined, withNanos: boolean): Fields {
+  if (value instanceof Date) {
+    const epochMs = value.getTime();
+    if (Number.isNaN(epochMs)) throw new RangeError('Invalid time value');
+    return zonedFields(epochMs, 0, timeZone ?? systemTimeZone());
+  }
+  if (isInstant(value)) {
+    const [epochMs, nanos] = splitEpoch(value, withNanos);
+    return zonedFields(epochMs, nanos, timeZone ?? systemTimeZone());
+  }
+  if (isZonedDateTime(value)) {
+    const zone = value.timeZoneId;
+    if (timeZone !== undefined && timeZone !== zone) {
+      throw new RangeError(`format: timeZone "${timeZone}" does not match the ZonedDateTime's zone "${zone}"`);
+    }
+    const [epochMs, nanos] = splitEpoch(value, withNanos);
+    return zonedFields(epochMs, nanos, zone);
+  }
+  if (timeZone !== undefined) {
+    throw new RangeError(`format: a ${kindName(value)} has no time zone; drop the timeZone option`);
+  }
+  return plainFields(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,13 +218,27 @@ function partOf(
   return part.value;
 }
 
+/**
+ * Locale words (month, weekday, era, day period) by key. Asking Intl costs a
+ * formatter lookup and a `formatToParts` call; the set of distinct words is
+ * small, so each is computed once.
+ */
+const NAME_CACHE_LIMIT = 2000;
+const names = new Map<string, string>();
+
 function monthName(locale: string, month: number, width: Width, standAlone: boolean): string {
-  const options: Intl.DateTimeFormatOptions = standAlone ? { month: width } : { month: width, day: 'numeric' };
-  return partOf(locale, options, Date.UTC(2000, month - 1, 1), 'month');
+  return remember(names, `M|${locale}|${width}|${standAlone ? 'L' : 'M'}|${month}`, NAME_CACHE_LIMIT, () => {
+    const options: Intl.DateTimeFormatOptions = standAlone ? { month: width } : { month: width, day: 'numeric' };
+    return partOf(locale, options, Date.UTC(2000, month - 1, 1), 'month');
+  });
 }
 
 /** `isoDay` 1 = Monday … 7 = Sunday (2000-01-03 was a Monday). */
 function weekdayName(locale: string, isoDay: number, width: Width | 'shortest'): string {
+  return remember(names, `E|${locale}|${width}|${isoDay}`, NAME_CACHE_LIMIT, () => weekdayText(locale, isoDay, width));
+}
+
+function weekdayText(locale: string, isoDay: number, width: Width | 'shortest'): string {
   const name = partOf(
     locale,
     { weekday: width === 'shortest' ? 'short' : width },
@@ -132,13 +250,17 @@ function weekdayName(locale: string, isoDay: number, width: Width | 'shortest'):
 }
 
 function eraName(locale: string, anno: boolean, width: Width): string {
-  return partOf(locale, { era: width, year: 'numeric' }, Date.UTC(anno ? 2000 : -1, 0, 1), 'era');
+  return remember(names, `G|${locale}|${width}|${anno ? 'AD' : 'BC'}`, NAME_CACHE_LIMIT, () =>
+    partOf(locale, { era: width, year: 'numeric' }, Date.UTC(anno ? 2000 : -1, 0, 1), 'era'),
+  );
 }
 
 type PeriodWidth = 'abbreviated' | 'lower' | 'wide' | 'narrow';
 
 function amPm(locale: string, pm: boolean, width: PeriodWidth): string {
-  const text = partOf(locale, { hour: 'numeric', hour12: true }, Date.UTC(2000, 0, 1, pm ? 15 : 9), 'dayPeriod');
+  const text = remember(names, `a|${locale}|${pm ? 'PM' : 'AM'}`, NAME_CACHE_LIMIT, () =>
+    partOf(locale, { hour: 'numeric', hour12: true }, Date.UTC(2000, 0, 1, pm ? 15 : 9), 'dayPeriod'),
+  );
   const latin = /^[AP]M$/.test(text);
   switch (width) {
     case 'abbreviated': {
@@ -165,9 +287,9 @@ function noonMidnight(locale: string, hour: number, width: PeriodWidth): string 
   return amPm(locale, hour >= 12, width);
 }
 
-function zoneName(locale: string, value: ZonedDateTime, width: 'short' | 'long'): string {
+function zoneName(locale: string, value: Fields, width: 'short' | 'long'): string {
   const formatter = dateTimeFormat(locale, { timeZone: value.timeZoneId, timeZoneName: width });
-  const part = formatter.formatToParts(value.epochMilliseconds).find(candidate => candidate.type === 'timeZoneName');
+  const part = formatter.formatToParts(value.epochMs).find(candidate => candidate.type === 'timeZoneName');
   if (part === undefined) throw new RangeError(`format: locale "${locale}" produced no time zone name`);
   return part.value;
 }
@@ -175,8 +297,8 @@ function zoneName(locale: string, value: ZonedDateTime, width: 'short' | 'long')
 // ---------------------------------------------------------------------------
 // offsets (east-positive minutes)
 
-function offsetMinutes(value: ZonedDateTime): number {
-  return Math.trunc(value.offsetNanoseconds / 60_000_000_000);
+function offsetMinutes(value: Fields): number {
+  return Math.trunc(value.offsetMs / 60_000);
 }
 
 function offsetText(minutes: number, delimiter: string): string {
@@ -201,15 +323,15 @@ function offsetShort(minutes: number, delimiter: string): string {
 // ---------------------------------------------------------------------------
 // tokens
 
-function needWall(value: Subject, token: string): PlainDateTime | ZonedDateTime {
-  if (isPlainDate(value))
+function needWall(value: Fields, token: string): Fields {
+  if (value.kind === 'PlainDate')
     throw new RangeError(`format: token "${token}" needs a time of day, but the value is a PlainDate`);
   return value;
 }
 
-function needZone(value: Subject, token: string): ZonedDateTime {
-  if (!isZonedDateTime(value)) {
-    throw new RangeError(`format: token "${token}" needs a time zone, but the value is a ${kindName(value)}`);
+function needZone(value: Fields, token: string): Fields {
+  if (value.kind !== 'ZonedDateTime') {
+    throw new RangeError(`format: token "${token}" needs a time zone, but the value is a ${value.kind}`);
   }
   return value;
 }
@@ -234,12 +356,12 @@ function weekdayToken(locale: string, isoDay: number, length: number): string {
   return weekdayName(locale, isoDay, nameWidth(length));
 }
 
-function fraction(value: PlainDateTime | ZonedDateTime, length: number): string {
-  const digits = String(value.millisecond * 1_000_000 + value.microsecond * 1000 + value.nanosecond).padStart(9, '0');
+function fraction(value: Fields, length: number): string {
+  const digits = String(value.fraction).padStart(9, '0');
   return length <= 9 ? digits.slice(0, length) : digits.padEnd(length, '0');
 }
 
-function formatToken(token: string, value: Subject, locale: string): string {
+function formatToken(token: string, value: Fields, locale: string): string {
   const length = token.length;
   const isOrdinal = length === 2 && token.charAt(1) === 'o';
   switch (token.charAt(0)) {
@@ -252,10 +374,10 @@ function formatToken(token: string, value: Subject, locale: string): string {
       return token === 'yy' ? pad(year, 2).slice(-2) : pad(year, length);
     }
     case 'R': {
-      return pad(isoWeek(value).weekYear, length);
+      return pad(isoWeekOf(value.year, value.month, value.day).weekYear, length);
     }
     case 'Q': {
-      const q = quarter(value);
+      const q = Math.floor((value.month - 1) / 3) + 1;
       if (isOrdinal || length <= 2) return numberOrOrdinal(q, token);
       if (length === 3) return `Q${q}`;
       return length === 5 ? String(q) : `${ordinal(q)} quarter`;
@@ -266,13 +388,13 @@ function formatToken(token: string, value: Subject, locale: string): string {
       return monthName(locale, value.month, nameWidth(length), token.charAt(0) === 'L');
     }
     case 'I': {
-      return numberOrOrdinal(isoWeek(value).week, token);
+      return numberOrOrdinal(isoWeekOf(value.year, value.month, value.day).week, token);
     }
     case 'd': {
       return numberOrOrdinal(value.day, token);
     }
     case 'D': {
-      return numberOrOrdinal(dayOfYear(value), token);
+      return numberOrOrdinal(dayOfYearOf(value.year, value.month, value.day), token);
     }
     case 'E': {
       return weekdayToken(locale, value.dayOfWeek, length);
@@ -392,6 +514,30 @@ function expandPresets(pattern: string): string {
     .join('');
 }
 
+/** A pattern split once into literal text and field tokens; the split is reused across calls. */
+type PatternPiece = string | Readonly<{ token: string }>;
+
+/** A compiled pattern; `nanos` is set when a fraction token shows digits below the millisecond. */
+type CompiledPattern = Readonly<{ pieces: readonly PatternPiece[]; nanos: boolean }>;
+
+const PATTERN_CACHE_LIMIT = 200;
+const patterns = new Map<string, CompiledPattern>();
+
+function compilePattern(pattern: string): CompiledPattern {
+  return remember(patterns, pattern, PATTERN_CACHE_LIMIT, () => {
+    const pieces = (expandPresets(pattern).match(TOKENS) ?? []).map((token): PatternPiece => {
+      if (token === "''") return "'";
+      const head = token.charAt(0);
+      if (head === "'") return unquote(token);
+      return LATIN_LETTER.test(head) ? { token } : token;
+    });
+    const nanos = pieces.some(
+      piece => typeof piece !== 'string' && piece.token.startsWith('S') && piece.token.length > 3,
+    );
+    return { pieces, nanos };
+  });
+}
+
 function unquote(chunk: string): string {
   const inner = ESCAPED.exec(chunk)?.[1];
   return inner === undefined ? chunk : inner.replaceAll(DOUBLE_QUOTE, "'");
@@ -416,21 +562,13 @@ function unquote(chunk: string): string {
  */
 export function format(value: Point | Date, pattern: string, options?: FormatOptions): string {
   const locale = options?.locale ?? DEFAULT_LOCALE;
-  const subject = toSubject(value, options?.timeZone, 'format');
-  return (expandPresets(pattern).match(TOKENS) ?? [])
-    .map(token => {
-      if (token === "''") return "'";
-      const head = token.charAt(0);
-      if (head === "'") return unquote(token);
-      if (LATIN_LETTER.test(head)) return formatToken(token, subject, locale);
-      return token;
-    })
-    .join('');
-}
-
-/** `May 20, 2026` — `format(value, 'LLL dd, y')`, the legacy `@arki/date/format` helper. */
-export function toHumanReadableDate(value: Point | Date, options?: FormatOptions): string {
-  return format(value, 'LLL dd, y', options);
+  const compiled = compilePattern(pattern);
+  const fields = toFields(value, options?.timeZone, compiled.nanos);
+  let text = '';
+  for (const piece of compiled.pieces) {
+    text += typeof piece === 'string' ? piece : formatToken(piece.token, fields, locale);
+  }
+  return text;
 }
 
 /** ISO 8601 / RFC 9557 text: the value's `toString()` (`2026-05-20`, `PT1H30M`, `…+03:00[Europe/Bucharest]`). */
@@ -474,4 +612,40 @@ export function formatIntl(value: Point | Date, options?: FormatIntlOptions): st
   }
   // Plain values: render their fields as a UTC wall clock so no zone shifts them.
   return dateTimeFormat(locale, { ...intl, timeZone: 'UTC' }).format(subject.toZonedDateTime('UTC').epochMilliseconds);
+}
+
+/**
+ * Locale text for a span, through `Intl.DateTimeFormat#formatRange`:
+ * `formatRange(plainDate('2026-05-20'), plainDate('2026-05-24'), { dateStyle: 'medium' })`
+ * → `May 20 – 24, 2026`. Both ends follow the same rules as `formatIntl`
+ * and must be the same kind of value; the end may precede the start.
+ */
+export function formatRange(start: Point | Date, end: Point | Date, options?: FormatIntlOptions): string {
+  const { locale = DEFAULT_LOCALE, timeZone, ...intl } = options ?? {};
+  const from = toSubject(start, timeZone, 'formatRange');
+  const to = toSubject(end, timeZone, 'formatRange');
+  if (isZonedDateTime(from) && isZonedDateTime(to)) {
+    if (from.timeZoneId !== to.timeZoneId) {
+      throw new RangeError(`formatRange: both ends must share a zone (${from.timeZoneId} vs ${to.timeZoneId})`);
+    }
+    return dateTimeFormat(locale, { ...intl, timeZone: from.timeZoneId }).formatRange(
+      from.epochMilliseconds,
+      to.epochMilliseconds,
+    );
+  }
+  if (isZonedDateTime(from) || isZonedDateTime(to) || isPlainDate(from) !== isPlainDate(to)) {
+    throw new RangeError('formatRange: both ends must be the same kind of value');
+  }
+  if (isPlainDate(from)) {
+    const timeOption = TIME_OPTIONS.find(key => intl[key] !== undefined);
+    if (timeOption !== undefined) {
+      throw new RangeError(`formatRange: a PlainDate has no time of day; drop the "${timeOption}" option`);
+    }
+  } else if (intl.timeZoneName !== undefined) {
+    throw new RangeError('formatRange: a PlainDateTime has no time zone; drop the "timeZoneName" option');
+  }
+  return dateTimeFormat(locale, { ...intl, timeZone: 'UTC' }).formatRange(
+    from.toZonedDateTime('UTC').epochMilliseconds,
+    to.toZonedDateTime('UTC').epochMilliseconds,
+  );
 }

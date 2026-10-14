@@ -29,6 +29,5 @@ export declare function fromPickerDate(value: Date, basis?: DateBasis): PlainDat
  * basis (a zone that skipped the date).
  */
 export declare function toPickerDate(value: PlainDate, basis?: DateBasis): Date;
-/** The runtime's current IANA time zone (e.g. `Europe/Bucharest`). */
-export declare function systemTimeZone(): string;
+export { systemTimeZone } from './internal/system-zone.js';
 //# sourceMappingURL=interop.d.ts.map

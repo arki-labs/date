@@ -90,4 +90,15 @@ export type HumanizeOptions = Readonly<{
  * absolute text prefixed with `-`; a zero duration prints 0 of the smallest unit.
  */
 export declare function humanizeDuration(d: Duration, options?: HumanizeOptions): string;
+export type DurationIntlOptions = Readonly<{
+    locale?: string;
+}> & Readonly<Intl.DurationFormatOptions>;
+/**
+ * Locale-native duration text through `Intl.DurationFormat`: `formatDurationIntl(d, { style: 'short' })`
+ * → `1 hr, 30 min` (en-US), with proper plurals in every locale. Unlike `humanizeDuration`
+ * the text depends on the runtime's ICU data, and engines without `Intl.DurationFormat`
+ * (Hermes, Node ≤ 22) throw a `RangeError` — use `humanizeDuration` when every runtime
+ * must print the same text.
+ */
+export declare function formatDurationIntl(d: Duration, options?: DurationIntlOptions): string;
 //# sourceMappingURL=duration.d.ts.map

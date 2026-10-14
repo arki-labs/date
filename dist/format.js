@@ -16,9 +16,11 @@
  *   `PlainDateTime`, an unknown pattern letter, an invalid `Date`.
  * - Default locale is `'en-US'`.
  */
-import { dayOfYear, isoWeek, quarter } from './calendar.js';
 import { toISO } from './core.js';
+import { remember } from './internal/cache.js';
+import { civilFromDays, dayOfYearOf, daysFromCivil, isoWeekOf, MS_PER_DAY, weekdayOfDays } from './internal/civil.js';
 import { dateTimeFormat } from './internal/intl.js';
+import { offsetAt } from './internal/offsets.js';
 import { systemTimeZone } from './interop.js';
 import { isInstant, isPlainDate, isPlainDateTime, isZonedDateTime, Temporal } from './types.js';
 const DEFAULT_LOCALE = 'en-US';
@@ -53,6 +55,83 @@ function toSubject(value, timeZone, operation) {
         throw new RangeError(`${operation}: a ${kindName(value)} has no time zone; drop the timeZone option`);
     }
     return value.withCalendar('iso8601');
+}
+function zonedFields(epochMs, nanosOfMs, timeZoneId) {
+    const offsetMs = offsetAt(timeZoneId, epochMs);
+    const wall = epochMs + offsetMs;
+    const days = Math.floor(wall / MS_PER_DAY);
+    const { year, month, day } = civilFromDays(days);
+    const msOfDay = wall - days * MS_PER_DAY;
+    return {
+        kind: 'ZonedDateTime',
+        year,
+        month,
+        day,
+        dayOfWeek: weekdayOfDays(days),
+        hour: Math.floor(msOfDay / 3_600_000),
+        minute: Math.floor(msOfDay / 60_000) % 60,
+        second: Math.floor(msOfDay / 1000) % 60,
+        fraction: (msOfDay % 1000) * 1_000_000 + nanosOfMs,
+        offsetMs,
+        timeZoneId,
+        epochMs,
+    };
+}
+/** Epoch milliseconds (floored) and the nanoseconds left within that millisecond. */
+function splitEpoch(value, withNanos) {
+    const epochMs = value.epochMilliseconds;
+    if (!withNanos)
+        return [epochMs, 0];
+    const rest = Number(value.epochNanoseconds - BigInt(epochMs) * 1000000n);
+    return rest < 0 ? [epochMs - 1, rest + 1_000_000] : [epochMs, rest];
+}
+function plainFields(value) {
+    const iso = value.calendarId === 'iso8601' ? value : value.withCalendar('iso8601');
+    const { year, month, day } = iso;
+    const base = {
+        year,
+        month,
+        day,
+        dayOfWeek: weekdayOfDays(daysFromCivil(year, month, day)),
+        offsetMs: 0,
+        timeZoneId: '',
+        epochMs: 0,
+    };
+    if (isPlainDate(iso))
+        return { ...base, kind: 'PlainDate', hour: 0, minute: 0, second: 0, fraction: 0 };
+    return {
+        ...base,
+        kind: 'PlainDateTime',
+        hour: iso.hour,
+        minute: iso.minute,
+        second: iso.second,
+        fraction: iso.millisecond * 1_000_000 + iso.microsecond * 1000 + iso.nanosecond,
+    };
+}
+/** The fields `format` reads, with the same zone rules and errors as `toSubject`. */
+function toFields(value, timeZone, withNanos) {
+    if (value instanceof Date) {
+        const epochMs = value.getTime();
+        if (Number.isNaN(epochMs))
+            throw new RangeError('Invalid time value');
+        return zonedFields(epochMs, 0, timeZone ?? systemTimeZone());
+    }
+    if (isInstant(value)) {
+        const [epochMs, nanos] = splitEpoch(value, withNanos);
+        return zonedFields(epochMs, nanos, timeZone ?? systemTimeZone());
+    }
+    if (isZonedDateTime(value)) {
+        const zone = value.timeZoneId;
+        if (timeZone !== undefined && timeZone !== zone) {
+            throw new RangeError(`format: timeZone "${timeZone}" does not match the ZonedDateTime's zone "${zone}"`);
+        }
+        const [epochMs, nanos] = splitEpoch(value, withNanos);
+        return zonedFields(epochMs, nanos, zone);
+    }
+    if (timeZone !== undefined) {
+        throw new RangeError(`format: a ${kindName(value)} has no time zone; drop the timeZone option`);
+    }
+    return plainFields(value);
 }
 // ---------------------------------------------------------------------------
 // numbers
@@ -89,21 +168,33 @@ function partOf(locale, options, epochMs, type) {
         throw new RangeError(`format: locale "${locale}" produced no ${type} text`);
     return part.value;
 }
+/**
+ * Locale words (month, weekday, era, day period) by key. Asking Intl costs a
+ * formatter lookup and a `formatToParts` call; the set of distinct words is
+ * small, so each is computed once.
+ */
+const NAME_CACHE_LIMIT = 2000;
+const names = new Map();
 function monthName(locale, month, width, standAlone) {
-    const options = standAlone ? { month: width } : { month: width, day: 'numeric' };
-    return partOf(locale, options, Date.UTC(2000, month - 1, 1), 'month');
+    return remember(names, `M|${locale}|${width}|${standAlone ? 'L' : 'M'}|${month}`, NAME_CACHE_LIMIT, () => {
+        const options = standAlone ? { month: width } : { month: width, day: 'numeric' };
+        return partOf(locale, options, Date.UTC(2000, month - 1, 1), 'month');
+    });
 }
 /** `isoDay` 1 = Monday … 7 = Sunday (2000-01-03 was a Monday). */
 function weekdayName(locale, isoDay, width) {
+    return remember(names, `E|${locale}|${width}|${isoDay}`, NAME_CACHE_LIMIT, () => weekdayText(locale, isoDay, width));
+}
+function weekdayText(locale, isoDay, width) {
     const name = partOf(locale, { weekday: width === 'shortest' ? 'short' : width }, Date.UTC(2000, 0, 2 + isoDay), 'weekday');
     // Intl has no two-letter width; date-fns en-US uses "Mo", "Tu", … for it.
     return width === 'shortest' && isEnglish(locale) ? name.slice(0, 2) : name;
 }
 function eraName(locale, anno, width) {
-    return partOf(locale, { era: width, year: 'numeric' }, Date.UTC(anno ? 2000 : -1, 0, 1), 'era');
+    return remember(names, `G|${locale}|${width}|${anno ? 'AD' : 'BC'}`, NAME_CACHE_LIMIT, () => partOf(locale, { era: width, year: 'numeric' }, Date.UTC(anno ? 2000 : -1, 0, 1), 'era'));
 }
 function amPm(locale, pm, width) {
-    const text = partOf(locale, { hour: 'numeric', hour12: true }, Date.UTC(2000, 0, 1, pm ? 15 : 9), 'dayPeriod');
+    const text = remember(names, `a|${locale}|${pm ? 'PM' : 'AM'}`, NAME_CACHE_LIMIT, () => partOf(locale, { hour: 'numeric', hour12: true }, Date.UTC(2000, 0, 1, pm ? 15 : 9), 'dayPeriod'));
     const latin = /^[AP]M$/.test(text);
     switch (width) {
         case 'abbreviated': {
@@ -131,7 +222,7 @@ function noonMidnight(locale, hour, width) {
 }
 function zoneName(locale, value, width) {
     const formatter = dateTimeFormat(locale, { timeZone: value.timeZoneId, timeZoneName: width });
-    const part = formatter.formatToParts(value.epochMilliseconds).find(candidate => candidate.type === 'timeZoneName');
+    const part = formatter.formatToParts(value.epochMs).find(candidate => candidate.type === 'timeZoneName');
     if (part === undefined)
         throw new RangeError(`format: locale "${locale}" produced no time zone name`);
     return part.value;
@@ -139,7 +230,7 @@ function zoneName(locale, value, width) {
 // ---------------------------------------------------------------------------
 // offsets (east-positive minutes)
 function offsetMinutes(value) {
-    return Math.trunc(value.offsetNanoseconds / 60_000_000_000);
+    return Math.trunc(value.offsetMs / 60_000);
 }
 function offsetText(minutes, delimiter) {
     const sign = minutes < 0 ? '-' : '+';
@@ -161,13 +252,13 @@ function offsetShort(minutes, delimiter) {
 // ---------------------------------------------------------------------------
 // tokens
 function needWall(value, token) {
-    if (isPlainDate(value))
+    if (value.kind === 'PlainDate')
         throw new RangeError(`format: token "${token}" needs a time of day, but the value is a PlainDate`);
     return value;
 }
 function needZone(value, token) {
-    if (!isZonedDateTime(value)) {
-        throw new RangeError(`format: token "${token}" needs a time zone, but the value is a ${kindName(value)}`);
+    if (value.kind !== 'ZonedDateTime') {
+        throw new RangeError(`format: token "${token}" needs a time zone, but the value is a ${value.kind}`);
     }
     return value;
 }
@@ -192,7 +283,7 @@ function weekdayToken(locale, isoDay, length) {
     return weekdayName(locale, isoDay, nameWidth(length));
 }
 function fraction(value, length) {
-    const digits = String(value.millisecond * 1_000_000 + value.microsecond * 1000 + value.nanosecond).padStart(9, '0');
+    const digits = String(value.fraction).padStart(9, '0');
     return length <= 9 ? digits.slice(0, length) : digits.padEnd(length, '0');
 }
 function formatToken(token, value, locale) {
@@ -209,10 +300,10 @@ function formatToken(token, value, locale) {
             return token === 'yy' ? pad(year, 2).slice(-2) : pad(year, length);
         }
         case 'R': {
-            return pad(isoWeek(value).weekYear, length);
+            return pad(isoWeekOf(value.year, value.month, value.day).weekYear, length);
         }
         case 'Q': {
-            const q = quarter(value);
+            const q = Math.floor((value.month - 1) / 3) + 1;
             if (isOrdinal || length <= 2)
                 return numberOrOrdinal(q, token);
             if (length === 3)
@@ -226,13 +317,13 @@ function formatToken(token, value, locale) {
             return monthName(locale, value.month, nameWidth(length), token.charAt(0) === 'L');
         }
         case 'I': {
-            return numberOrOrdinal(isoWeek(value).week, token);
+            return numberOrOrdinal(isoWeekOf(value.year, value.month, value.day).week, token);
         }
         case 'd': {
             return numberOrOrdinal(value.day, token);
         }
         case 'D': {
-            return numberOrOrdinal(dayOfYear(value), token);
+            return numberOrOrdinal(dayOfYearOf(value.year, value.month, value.day), token);
         }
         case 'E': {
             return weekdayToken(locale, value.dayOfWeek, length);
@@ -353,6 +444,22 @@ function expandPresets(pattern) {
     })
         .join('');
 }
+const PATTERN_CACHE_LIMIT = 200;
+const patterns = new Map();
+function compilePattern(pattern) {
+    return remember(patterns, pattern, PATTERN_CACHE_LIMIT, () => {
+        const pieces = (expandPresets(pattern).match(TOKENS) ?? []).map((token) => {
+            if (token === "''")
+                return "'";
+            const head = token.charAt(0);
+            if (head === "'")
+                return unquote(token);
+            return LATIN_LETTER.test(head) ? { token } : token;
+        });
+        const nanos = pieces.some(piece => typeof piece !== 'string' && piece.token.startsWith('S') && piece.token.length > 3);
+        return { pieces, nanos };
+    });
+}
 function unquote(chunk) {
     const inner = ESCAPED.exec(chunk)?.[1];
     return inner === undefined ? chunk : inner.replaceAll(DOUBLE_QUOTE, "'");
@@ -376,23 +483,13 @@ function unquote(chunk) {
  */
 export function format(value, pattern, options) {
     const locale = options?.locale ?? DEFAULT_LOCALE;
-    const subject = toSubject(value, options?.timeZone, 'format');
-    return (expandPresets(pattern).match(TOKENS) ?? [])
-        .map(token => {
-        if (token === "''")
-            return "'";
-        const head = token.charAt(0);
-        if (head === "'")
-            return unquote(token);
-        if (LATIN_LETTER.test(head))
-            return formatToken(token, subject, locale);
-        return token;
-    })
-        .join('');
-}
-/** `May 20, 2026` — `format(value, 'LLL dd, y')`, the legacy `@arki/date/format` helper. */
-export function toHumanReadableDate(value, options) {
-    return format(value, 'LLL dd, y', options);
+    const compiled = compilePattern(pattern);
+    const fields = toFields(value, options?.timeZone, compiled.nanos);
+    let text = '';
+    for (const piece of compiled.pieces) {
+        text += typeof piece === 'string' ? piece : formatToken(piece.token, fields, locale);
+    }
+    return text;
 }
 /** ISO 8601 / RFC 9557 text: the value's `toString()` (`2026-05-20`, `PT1H30M`, `…+03:00[Europe/Bucharest]`). */
 export function formatISO(value) {
@@ -434,5 +531,35 @@ export function formatIntl(value, options) {
     }
     // Plain values: render their fields as a UTC wall clock so no zone shifts them.
     return dateTimeFormat(locale, { ...intl, timeZone: 'UTC' }).format(subject.toZonedDateTime('UTC').epochMilliseconds);
+}
+/**
+ * Locale text for a span, through `Intl.DateTimeFormat#formatRange`:
+ * `formatRange(plainDate('2026-05-20'), plainDate('2026-05-24'), { dateStyle: 'medium' })`
+ * → `May 20 – 24, 2026`. Both ends follow the same rules as `formatIntl`
+ * and must be the same kind of value; the end may precede the start.
+ */
+export function formatRange(start, end, options) {
+    const { locale = DEFAULT_LOCALE, timeZone, ...intl } = options ?? {};
+    const from = toSubject(start, timeZone, 'formatRange');
+    const to = toSubject(end, timeZone, 'formatRange');
+    if (isZonedDateTime(from) && isZonedDateTime(to)) {
+        if (from.timeZoneId !== to.timeZoneId) {
+            throw new RangeError(`formatRange: both ends must share a zone (${from.timeZoneId} vs ${to.timeZoneId})`);
+        }
+        return dateTimeFormat(locale, { ...intl, timeZone: from.timeZoneId }).formatRange(from.epochMilliseconds, to.epochMilliseconds);
+    }
+    if (isZonedDateTime(from) || isZonedDateTime(to) || isPlainDate(from) !== isPlainDate(to)) {
+        throw new RangeError('formatRange: both ends must be the same kind of value');
+    }
+    if (isPlainDate(from)) {
+        const timeOption = TIME_OPTIONS.find(key => intl[key] !== undefined);
+        if (timeOption !== undefined) {
+            throw new RangeError(`formatRange: a PlainDate has no time of day; drop the "${timeOption}" option`);
+        }
+    }
+    else if (intl.timeZoneName !== undefined) {
+        throw new RangeError('formatRange: a PlainDateTime has no time zone; drop the "timeZoneName" option');
+    }
+    return dateTimeFormat(locale, { ...intl, timeZone: 'UTC' }).formatRange(from.toZonedDateTime('UTC').epochMilliseconds, to.toZonedDateTime('UTC').epochMilliseconds);
 }
 //# sourceMappingURL=format.js.map

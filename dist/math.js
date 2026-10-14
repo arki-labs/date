@@ -10,23 +10,28 @@
  * - `diff(from, to)` is `to − from`: positive when `to` is later.
  */
 import { instant } from './core.js';
-import { toDuration } from './internal/amount.js';
+import { negateDurationInput, toDurationInput } from './internal/amount.js';
+import { daysBetween } from './internal/days.js';
 import { sameKind } from './internal/kind.js';
-import { isInstant, ISO_WEEK, isPlainDate, isPlainDateTime, isZonedDateTime, Temporal } from './types.js';
-// ---------------------------------------------------------------------------
-// add / sub
-function addPoint(value, duration, options) {
-    if (isInstant(value))
-        return value.add(duration);
-    return value.add(duration, options);
-}
-/** `value + amount`. Calendar amounts are rejected on an `Instant` (project it into a zone first). */
+import { addPlainDate, endOfPlainDate, startOfPlainDate } from './internal/plain.js';
+import { addPoint, comparePoints, isCalendarUnit } from './internal/point.js';
+import { startOfWeekDate } from './internal/week.js';
+import { startOfZoned } from './internal/zoned.js';
+import { isDuration, isInstant, ISO_WEEK, isPlainDate, isPlainDateTime, isZonedDateTime } from './types.js';
 export function add(value, amount, options) {
-    return sameKind(value, addPoint(value, toDuration(amount), options));
+    return sameKind(value, addAny(value, toDurationInput(amount), options));
 }
-/** `value − amount`. Not always the inverse of `add` (Jan 31 + 1 month − 1 month = Feb 28 − 1 month = Jan 28). */
+/** Temporal's `add`, through the integer fast path for ISO-calendar plain dates. */
+function addAny(value, input, options) {
+    if (isPlainDate(value) && !isDuration(input)) {
+        const fast = addPlainDate(value, input, options?.overflow);
+        if (fast !== undefined)
+            return fast;
+    }
+    return addPoint(value, input, options);
+}
 export function sub(value, amount, options) {
-    return sameKind(value, addPoint(value, toDuration(amount).negated(), options));
+    return sameKind(value, addAny(value, negateDurationInput(toDurationInput(amount)), options));
 }
 export function parts(value) {
     const date = { year: value.year, month: value.month, day: value.day };
@@ -53,11 +58,10 @@ export function set(value, patch, options) {
 }
 // ---------------------------------------------------------------------------
 // boundaries
-function startOfWeekDate(date, rules) {
-    const back = (date.dayOfWeek - rules.startsOn + 7) % 7;
-    return back === 0 ? date : date.subtract({ days: back });
-}
 function startOfDate(date, unit, rules) {
+    const fast = startOfPlainDate(date, unit, rules);
+    if (fast !== undefined)
+        return fast;
     switch (unit) {
         case 'day': {
             return date;
@@ -76,15 +80,17 @@ function startOfDate(date, unit, rules) {
         }
     }
 }
-function isCalendarUnit(unit) {
-    return unit === 'year' || unit === 'quarter' || unit === 'month' || unit === 'week' || unit === 'day';
-}
 function startOfPoint(value, unit, rules) {
     if (isCalendarUnit(unit)) {
         if (isInstant(value))
             throw new RangeError(`startOf(${unit}) needs a zone — project the Instant with inZone() first`);
         if (isPlainDate(value))
             return startOfDate(value, unit, rules);
+        if (isZonedDateTime(value)) {
+            const fast = startOfZoned(value, unit, rules);
+            if (fast !== undefined)
+                return fast;
+        }
         const date = startOfDate(value.toPlainDate(), unit, rules);
         if (isPlainDateTime(value))
             return date.toPlainDateTime();
@@ -94,7 +100,6 @@ function startOfPoint(value, unit, rules) {
         throw new RangeError(`startOf(${unit}) is not defined for a PlainDate`);
     return value.round({ smallestUnit: unit, roundingMode: 'floor' });
 }
-/** The first moment of the unit containing `value` (week per `options.week`, ISO by default). */
 export function startOf(value, unit, options) {
     return sameKind(value, startOfPoint(value, unit, options?.week ?? ISO_WEEK));
 }
@@ -135,22 +140,39 @@ function oneUnit(unit) {
         }
     }
 }
-/** The start of the unit after the one containing `value` — the exclusive end of `startOf(value, unit)`. */
-export function nextBoundary(value, unit, options) {
-    const rules = options?.week ?? ISO_WEEK;
-    const start = startOfPoint(value, unit, rules);
-    const next = addPoint(start, toDuration(oneUnit(unit)));
-    return sameKind(value, startOfPoint(next, unit, rules));
+function nextBoundaryPoint(value, unit, rules) {
+    if (isCalendarUnit(unit) || isPlainDate(value)) {
+        const next = addPoint(startOfPoint(value, unit, rules), oneUnit(unit));
+        return isZonedDateTime(next) ? startOfPoint(next, unit, rules) : next;
+    }
+    // The next `:00` on the clock. Temporal resolves a DST gap forward, so this
+    // is also the start of a shortened unit (Lord Howe 02:30 after a 02:00 → 02:30 jump).
+    const wall = value.round({ smallestUnit: unit, roundingMode: 'ceil' });
+    if (!isZonedDateTime(value))
+        return comparePoints(wall, value) > 0 ? wall : addPoint(wall, oneUnit(unit));
+    // A fall-back fold repeats wall-clock time: the clock never shows the repeated
+    // hour as "next", and a unit may last longer than itself (Lord Howe 01:00–02:00
+    // spans 90 minutes). Step in exact time until the landed unit starts after `value`.
+    let exact = value;
+    let exactStart;
+    do {
+        exact = addPoint(exact, oneUnit(unit));
+        exactStart = startOfPoint(exact, unit, rules);
+    } while (comparePoints(exactStart, value) <= 0);
+    return comparePoints(wall, value) > 0 && comparePoints(wall, exactStart) < 0 ? wall : exactStart;
 }
-/**
- * The last representable moment of the unit: the next boundary minus one day
- * for a `PlainDate`, minus one nanosecond otherwise. Prefer `[startOf, nextBoundary)`
- * for range queries; `endOf` exists for display and inclusive APIs.
- */
+export function nextBoundary(value, unit, options) {
+    return sameKind(value, nextBoundaryPoint(value, unit, options?.week ?? ISO_WEEK));
+}
 export function endOf(value, unit, options) {
-    const next = nextBoundary(value, unit, options);
-    const step = isPlainDate(next) ? { days: 1 } : { nanoseconds: 1 };
-    return sameKind(value, addPoint(next, toDuration(step).negated()));
+    if (isPlainDate(value) && isCalendarUnit(unit)) {
+        const fast = endOfPlainDate(value, unit, options?.week ?? ISO_WEEK);
+        if (fast !== undefined)
+            return sameKind(value, fast);
+    }
+    const next = nextBoundaryPoint(value, unit, options?.week ?? ISO_WEEK);
+    const step = isPlainDate(next) ? { days: -1 } : { nanoseconds: -1 };
+    return sameKind(value, addPoint(next, step));
 }
 function roundTime(value, unit, increment, mode) {
     return value.round({ smallestUnit: unit, roundingIncrement: increment, roundingMode: mode });
@@ -172,7 +194,7 @@ function roundPoint(value, unit, options, mode) {
     const start = startOfPoint(value, unit, rules);
     if (mode === 'floor')
         return start;
-    const next = startOfPoint(addPoint(start, toDuration(oneUnit(unit))), unit, rules);
+    const next = nextBoundaryPoint(value, unit, rules);
     if (comparePoints(value, start) === 0)
         return start;
     if (mode === 'ceil')
@@ -191,9 +213,8 @@ function spanNanoseconds(from, to) {
         return to.epochNanoseconds - from.epochNanoseconds;
     if (isZonedDateTime(from) && isZonedDateTime(to))
         return to.epochNanoseconds - from.epochNanoseconds;
-    if (isPlainDate(from) && isPlainDate(to)) {
-        return BigInt(from.until(to, { largestUnit: 'day' }).days) * 86400000000000n;
-    }
+    if (isPlainDate(from) && isPlainDate(to))
+        return BigInt(daysBetween(from, to)) * 86400000000000n;
     if (isPlainDateTime(from) && isPlainDateTime(to)) {
         const d = from.until(to, { largestUnit: 'hour' });
         return (BigInt(d.hours) * 3600000000000n +
@@ -205,26 +226,12 @@ function spanNanoseconds(from, to) {
     }
     throw new TypeError('spanNanoseconds needs two values of the same kind');
 }
-function comparePoints(a, b) {
-    if (isPlainDate(a) && isPlainDate(b))
-        return Temporal.PlainDate.compare(a, b);
-    if (isPlainDateTime(a) && isPlainDateTime(b))
-        return Temporal.PlainDateTime.compare(a, b);
-    if (isZonedDateTime(a) && isZonedDateTime(b))
-        return Temporal.ZonedDateTime.compare(a, b);
-    if (isInstant(a) && isInstant(b))
-        return Temporal.Instant.compare(a, b);
-    throw new TypeError('compare needs two values of the same kind');
-}
-/** Round down to the unit (or to a multiple of it via `increment`). Same as `startOf` for calendar units. */
 export function floor(value, unit, options) {
     return sameKind(value, roundPoint(value, unit, options, 'floor'));
 }
-/** Round up to the unit; a value already on the boundary is returned unchanged. */
 export function ceil(value, unit, options) {
     return sameKind(value, roundPoint(value, unit, options, 'ceil'));
 }
-/** Round to the nearest unit boundary; ties go to the later boundary unless `tie: 'earlier'`. */
 export function round(value, unit, options) {
     return sameKind(value, roundPoint(value, unit, options, 'round'));
 }
@@ -286,13 +293,15 @@ function durationField(duration, unit) {
         }
     }
 }
-/**
- * `to − from` in whole units (truncated toward zero), or the exact fractional
- * total with `{ fractional: true }`. Calendar units are anchored at `from`:
- * `diff(Jan 31, Feb 28, 'month')` is 1, the reverse is `-28/31`.
- * Zoned values must share a zone for calendar units.
- */
 export function diff(from, to, unit, options) {
+    if (isPlainDate(from) && isPlainDate(to) && (unit === 'day' || unit === 'week')) {
+        // Whole days between two calendar dates is integer arithmetic; no need
+        // for Temporal's general (and, on the polyfill, slow) `until`.
+        const days = daysBetween(from, to);
+        if (unit === 'day')
+            return days;
+        return options?.fractional ? days / 7 : Math.trunc(days / 7);
+    }
     const largestUnit = unit === 'quarter' ? 'month' : unit;
     const duration = untilPoint(from, to, largestUnit);
     const relativeTo = anchorOf(from);
@@ -301,7 +310,6 @@ export function diff(from, to, unit, options) {
         : durationField(duration, largestUnit);
     return unit === 'quarter' ? (options?.fractional ? total / 3 : Math.trunc(total / 3)) : total;
 }
-/** `to − from` as a balanced `Duration` (e.g. 1 month 3 days 4 hours). */
 export function until(from, to, options) {
     const base = untilPoint(from, to, options.largestUnit);
     if (!options.smallestUnit && !options.roundingMode)
@@ -338,6 +346,4 @@ export function diffElapsed(from, to, unit, options) {
         return Number(ns) / Number(NS[unit]);
     return Number(ns / NS[unit]);
 }
-/** @internal re-exported for sibling modules */
-export const internal = { startOfWeekDate, comparePoints, isCalendarUnit, oneUnit };
 //# sourceMappingURL=math.js.map

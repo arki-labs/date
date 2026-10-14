@@ -10,11 +10,12 @@
 import type { Clock } from '@arki/clock';
 import type { BusinessCalendar } from './business.js';
 import type { WeekInfo } from './calendar.js';
-import type { BucketUnitFor, SameOptions } from './compare.js';
-import type { FormatOptions } from './format.js';
+import type { SameOptions } from './compare.js';
+import type { ZonedOptions } from './core.js';
+import type { FormatIntlOptions, FormatOptions } from './format.js';
 import type { ArithmeticOptions, DiffOptions, PartsFor, RoundOptions, SetOptions, UntilOptions } from './math.js';
 import type { RelativeOptions } from './relative.js';
-import type { Amount, Bounds, Disambiguation, Duration, Instant, PlainDate, PlainDateTime, Point, TimeUnit, Unit, WallParts, Weekday, WeekRules, ZonedDateTime } from './types.js';
+import type { Amount, Bounds, Duration, Instant, PlainDate, PlainDateTime, Point, TimeUnit, Unit, WallParts, Weekday, WeekRules, ZonedDateTime } from './types.js';
 export type DateContextOptions = Readonly<{
     timeZone?: string;
     locale?: string;
@@ -76,7 +77,7 @@ export declare class DateValue {
     isAfter(other: DateLike): boolean;
     isSameOrBefore(other: DateLike): boolean;
     isSameOrAfter(other: DateLike): boolean;
-    isSame(other: DateLike, unit: BucketUnitFor<ZonedDateTime>, options?: SameOptions): boolean;
+    isSame(other: DateLike, unit: Unit, options?: SameOptions): boolean;
     isSameDay(other: DateLike): boolean;
     isSameWeek(other: DateLike): boolean;
     isSameMonth(other: DateLike): boolean;
@@ -107,9 +108,7 @@ export declare class DateValue {
     /** Same instant, another zone. */
     inZone(timeZone: string): DateValue;
     /** Same wall clock, another zone (the instant changes). */
-    reinterpretZone(timeZone: string, options?: Readonly<{
-        disambiguation?: Disambiguation;
-    }>): DateValue;
+    reinterpretZone(timeZone: string, options?: ZonedOptions): DateValue;
     toUTC(): DateValue;
     offset(): string;
     isBusinessDay(calendar?: BusinessCalendar): boolean;
@@ -120,7 +119,7 @@ export declare class DateValue {
     /** Token formatting (`'yyyy-MM-dd HH:mm'`) in the context locale. */
     format(pattern: string, options?: FormatOptions): string;
     /** `Intl.DateTimeFormat` formatting in the context locale. */
-    formatIntl(options?: Intl.DateTimeFormatOptions & FormatOptions): string;
+    formatIntl(options?: FormatIntlOptions): string;
     /** "3 days ago" / "in 2 hours" relative to `reference`. */
     relativeTo(reference: DateLike, options?: RelativeOptions): string;
     /** Apply any function to the underlying value; a `ZonedDateTime` result is re-wrapped. */

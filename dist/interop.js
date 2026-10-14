@@ -5,7 +5,6 @@
  * *calendar fields* a picker showed the user.
  */
 import { instant, plainDate } from './core.js';
-import { Temporal } from './types.js';
 /** The instant a `Date` represents. */
 export function fromDate(value) {
     return instant(value);
@@ -40,15 +39,13 @@ export function toPickerDate(value, basis = LOCAL) {
     let result;
     switch (basis.basis) {
         case 'local': {
-            result = new Date(value.year, value.month - 1, value.day, 0, 0, 0, 0);
-            if (value.year >= 0 && value.year < 100)
-                result.setFullYear(value.year);
+            result = new Date(2000, 0, 1, 0, 0, 0, 0);
+            result.setFullYear(value.year, value.month - 1, value.day);
             break;
         }
         case 'utc': {
-            result = new Date(Date.UTC(value.year, value.month - 1, value.day));
-            if (value.year >= 0 && value.year < 100)
-                result.setUTCFullYear(value.year);
+            result = new Date(0);
+            result.setUTCFullYear(value.year, value.month - 1, value.day);
             break;
         }
         case 'zone': {
@@ -61,8 +58,5 @@ export function toPickerDate(value, basis = LOCAL) {
     }
     return result;
 }
-/** The runtime's current IANA time zone (e.g. `Europe/Bucharest`). */
-export function systemTimeZone() {
-    return Temporal.Now.timeZoneId();
-}
+export { systemTimeZone } from './internal/system-zone.js';
 //# sourceMappingURL=interop.js.map

@@ -4,7 +4,7 @@
  * `TypeError`. Ordering of zoned values compares instants; equality also
  * compares the zone.
  */
-import type { Bounds, CalendarUnit, Civil, Ordering, PlainDate, Point, Timeline, Unit, WeekRules } from './types.js';
+import type { Bounds, CalendarUnit, Civil, Instant, Ordering, PlainDate, Point, Timeline, Unit, WeekRules } from './types.js';
 /** Field-for-field equality (for zoned values: same instant *and* same zone). */
 export declare function equals<T extends Point>(a: T, b: NoInfer<T>): boolean;
 /** Do two timeline values point at the same instant, whatever their zones? */
@@ -22,14 +22,18 @@ export type SameOptions = Readonly<{
     timeZone?: string;
 }>;
 /** Units a value can be bucketed by: instants may use calendar units once projected into `timeZone`. */
-export type BucketUnitFor<T extends Point> = T extends PlainDate ? CalendarUnit : Unit;
+export type BucketUnitFor<T extends Point> = PlainDate extends T ? CalendarUnit : Unit;
 /** Do both values fall in the same calendar unit (day, ISO week, month, quarter, year, hour…)? */
+export declare function isSame<T extends Civil>(a: T, b: NoInfer<T>, unit: BucketUnitFor<NoInfer<T>>, options?: SameOptions): boolean;
+export declare function isSame(a: Instant, b: Instant, unit: Unit, options: SameOptions & {
+    timeZone: string;
+}): boolean;
 export declare function isSame<T extends Point>(a: T, b: NoInfer<T>, unit: BucketUnitFor<NoInfer<T>>, options?: SameOptions): boolean;
-export declare function isSameDay(a: Civil, b: Civil, options?: SameOptions): boolean;
-export declare function isSameWeek(a: Civil, b: Civil, options?: SameOptions): boolean;
-export declare function isSameMonth(a: Civil, b: Civil, options?: SameOptions): boolean;
-export declare function isSameQuarter(a: Civil, b: Civil, options?: SameOptions): boolean;
-export declare function isSameYear(a: Civil, b: Civil, options?: SameOptions): boolean;
+export declare function isSameDay<T extends Civil>(a: T, b: NoInfer<T>, options?: SameOptions): boolean;
+export declare function isSameWeek<T extends Civil>(a: T, b: NoInfer<T>, options?: SameOptions): boolean;
+export declare function isSameMonth<T extends Civil>(a: T, b: NoInfer<T>, options?: SameOptions): boolean;
+export declare function isSameQuarter<T extends Civil>(a: T, b: NoInfer<T>, options?: SameOptions): boolean;
+export declare function isSameYear<T extends Civil>(a: T, b: NoInfer<T>, options?: SameOptions): boolean;
 /** Is `value` inside `[start, end)` (or the given `bounds`)? Reversed bounds throw. */
 export declare function isBetween<T extends Point>(value: T, start: NoInfer<T>, end: NoInfer<T>, options?: Readonly<{
     bounds?: Bounds;
