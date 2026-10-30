@@ -113,7 +113,7 @@ export function mergeIntervals(list) {
             assertSameIntervalKind(first, item, 'mergeIntervals');
     const sorted = list
         .filter(item => !isEmptyInterval(item))
-        .toSorted((x, y) => cmp(x.start, y.start) || cmp(x.end, y.end));
+        .sort((x, y) => cmp(x.start, y.start) || cmp(x.end, y.end));
     const merged = [];
     for (const item of sorted) {
         const last = merged.at(-1);

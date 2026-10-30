@@ -26,7 +26,7 @@ function dateKey(value) {
  */
 export function businessCalendar(options) {
     const requested = options?.weekend ?? [6, 7];
-    const weekend = [...new Set(requested)].toSorted((a, b) => a - b);
+    const weekend = [...new Set(requested)].sort((a, b) => a - b);
     for (const day of weekend) {
         if (!isWeekdayNumber(day))
             throw new RangeError(`businessCalendar: ${String(day)} is not an ISO weekday (1–7)`);

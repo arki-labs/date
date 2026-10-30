@@ -1,24 +1,41 @@
 /**
- * Construction and parsing. Every constructor is strict: it validates and
- * throws `RangeError` on bad input rather than returning an "invalid" value.
- * Use `tryParse` when a failure is expected (user input).
+ * Construction and parsing. Parsers return, builders throw:
+ * - Builders (`plainDate`, `plainDateTime`, `instant`, `zoned`, `fromUnix`,
+ *   `fromMillis`) take the caller's own values. They validate and throw
+ *   `RangeError` on a bad value, because a bad value there is a bug. A
+ *   `timeZone` argument is the caller's value too: an unknown name throws.
+ * - Outside text (forms, query strings, files, APIs) goes through a parser:
+ *   `parseISO` here, `parseDate` / `parseDateTime` / `parseZoned` in `parse`.
+ *   They return the value or a typed failure (`InvalidDateText`,
+ *   `UnknownTimeZone`) and never throw on bad text.
  */
+import type { UnknownTimeZone } from './failures.js';
 import type { Civil, DateParts, Disambiguation, Duration, Instant, PlainDate, PlainDateTime, Point, Timeline, Wall, WallInput, ZonedDateTime } from './types.js';
+import { InvalidDateText } from './failures.js';
 /**
- * A calendar date. Accepts `YYYY-MM-DD` only — a timestamp string is rejected
+ * A calendar date from the caller's own value; throws `RangeError` on a bad one.
+ * Read outside text with `parseDate` or `parseISO` instead. Accepts `YYYY-MM-DD` only — a timestamp string is rejected
  * so that a zone and time are never silently dropped. Pass a `ZonedDateTime`
  * when you really mean "the date this moment falls on in its zone".
  */
 export declare function plainDate(input: string | DateParts | Civil): PlainDate;
-/** A wall-clock date and time with no zone. Strings carrying an offset or zone are rejected. */
+/**
+ * A wall-clock date and time with no zone, from the caller's own value. Strings carrying an
+ * offset or zone throw `RangeError`. Read outside text with `parseDateTime` instead.
+ */
 export declare function plainDateTime(input: string | WallInput | Wall): PlainDateTime;
-/** An exact moment. Strings must carry `Z` or an offset; `Date` is copied by its epoch milliseconds. */
+/**
+ * An exact moment from the caller's own value. Strings must carry `Z` or an offset; `Date` is
+ * copied by its epoch milliseconds. A bad value throws `RangeError`. Read outside text with `parseISO` instead.
+ */
 export declare function instant(input: string | Date | Timeline): Instant;
 export type ZonedOptions = Readonly<{
     disambiguation?: Disambiguation;
 }>;
 /**
- * An exact moment in a named zone.
+ * An exact moment in a named zone, from the caller's own values. A bad string or an unknown
+ * zone name throws `RangeError`. Read outside text with `parseZoned` or `parseISO`, and check
+ * outside zone names with `isValidTimeZone`.
  *
  * - `zoned('2026-03-29T03:30+03:00[Europe/Bucharest]')` — a string with a `[Zone]` annotation.
  * - `zoned('2026-03-29T00:30:00Z', 'Europe/Bucharest')` — an exact timestamp shown in a zone;
@@ -30,7 +47,7 @@ export type ZonedOptions = Readonly<{
  */
 export declare function zoned(input: string | ZonedDateTime, options?: ZonedOptions): ZonedDateTime;
 export declare function zoned(input: string | WallInput | PlainDateTime | PlainDate | Instant | ZonedDateTime | Date, timeZone: string, options?: ZonedOptions): ZonedDateTime;
-/** Unix time in seconds (fractions allowed, kept to nanosecond precision). */
+/** Unix time in seconds (fractions allowed, kept to nanosecond precision). Throws `RangeError` past ±8.64e12. */
 export declare function fromUnix(seconds: number): Instant;
 /** Unix time in whole milliseconds (the `Date.now()` convention). */
 export declare function fromMillis(milliseconds: number): Instant;
@@ -55,26 +72,9 @@ export type ParseISOOptions = Readonly<{
  *
  * Text without an offset is a wall-clock reading in `options.timeZone`
  * (default: the runtime zone), resolved with the `'compatible'` DST rule.
- * Anything else is a `RangeError`. For strict RFC 9557 text use `instant()`
- * or `zoned()`; for a calendar date use `plainDate()`.
+ * This is a door for outside text: it never throws on bad input. Anything
+ * else returns an `InvalidDateText` failure with `data.reason` `'not_iso'`,
+ * and an unknown `options.timeZone` returns `UnknownTimeZone`.
  */
-export declare function parseISO(text: string, options?: ParseISOOptions): Instant;
-export type ParseKinds = {
-    plainDate: PlainDate;
-    plainDateTime: PlainDateTime;
-    zoned: ZonedDateTime;
-    instant: Instant;
-    duration: Duration;
-    /** Lenient ISO text via `parseISO`. */
-    iso: Instant;
-};
-export type ParseResult<T> = {
-    readonly ok: true;
-    readonly value: T;
-} | {
-    readonly ok: false;
-    readonly error: RangeError;
-};
-/** Parse without throwing. The `kind` is explicit so a string is never reinterpreted. */
-export declare function tryParse<K extends keyof ParseKinds>(text: string, kind: K): ParseResult<ParseKinds[K]>;
+export declare function parseISO(text: string, options?: ParseISOOptions): Instant | InvalidDateText | UnknownTimeZone;
 //# sourceMappingURL=core.d.ts.map

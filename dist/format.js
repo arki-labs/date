@@ -163,10 +163,17 @@ function isEnglish(locale) {
 /** The text of one part when a fixed UTC moment is formatted with `options`. */
 function partOf(locale, options, epochMs, type) {
     const formatter = dateTimeFormat(locale, { ...options, timeZone: 'UTC', calendar: 'gregory' });
-    const part = formatter.formatToParts(epochMs).find(candidate => candidate.type === type);
-    if (part === undefined)
-        throw new RangeError(`format: locale "${locale}" produced no ${type} text`);
-    return part.value;
+    const parts = formatter.formatToParts(epochMs);
+    const part = parts.find(candidate => candidate.type === type);
+    if (part !== undefined)
+        return part.value;
+    // Hermes V1 types a lone field as one `literal` part ({ month: 'long' } gives
+    // [{ type: 'literal', value: 'January' }]). With a single field requested, the
+    // whole formatted text is that field, so `format` is exact.
+    const alone = (type === 'month' || type === 'weekday') && parts.length === 1 && parts[0]?.type === 'literal';
+    if (alone)
+        return formatter.format(epochMs);
+    throw new RangeError(`format: locale "${locale}" produced no ${type} text`);
 }
 /**
  * Locale words (month, weekday, era, day period) by key. Asking Intl costs a
@@ -223,8 +230,10 @@ function noonMidnight(locale, hour, width) {
 function zoneName(locale, value, width) {
     const formatter = dateTimeFormat(locale, { timeZone: value.timeZoneId, timeZoneName: width });
     const part = formatter.formatToParts(value.epochMs).find(candidate => candidate.type === 'timeZoneName');
-    if (part === undefined)
-        throw new RangeError(`format: locale "${locale}" produced no time zone name`);
+    if (part === undefined) {
+        // Hermes V1 splits "GMT+2" into literal parts and never emits a `timeZoneName` part.
+        throw new RangeError(`format: this runtime's Intl.DateTimeFormat#formatToParts cannot isolate the time zone name for locale "${locale}"; use the numeric offset tokens (xxx, XXX) instead`);
+    }
     return part.value;
 }
 // ---------------------------------------------------------------------------
@@ -532,11 +541,19 @@ export function formatIntl(value, options) {
     // Plain values: render their fields as a UTC wall clock so no zone shifts them.
     return dateTimeFormat(locale, { ...intl, timeZone: 'UTC' }).format(subject.toZonedDateTime('UTC').epochMilliseconds);
 }
+/** `Intl.DateTimeFormat#formatRange` is missing on some engines (Hermes V1): fail with a clear error, not "undefined is not a function". */
+function rangeFormatter(formatter) {
+    if (typeof Reflect.get(formatter, 'formatRange') !== 'function') {
+        throw new RangeError('formatRange: Intl.DateTimeFormat#formatRange is not available in this runtime');
+    }
+    return formatter;
+}
 /**
  * Locale text for a span, through `Intl.DateTimeFormat#formatRange`:
  * `formatRange(plainDate('2026-05-20'), plainDate('2026-05-24'), { dateStyle: 'medium' })`
  * → `May 20 – 24, 2026`. Both ends follow the same rules as `formatIntl`
  * and must be the same kind of value; the end may precede the start.
+ * Engines without `formatRange` (Hermes V1) throw a `RangeError`.
  */
 export function formatRange(start, end, options) {
     const { locale = DEFAULT_LOCALE, timeZone, ...intl } = options ?? {};
@@ -546,7 +563,7 @@ export function formatRange(start, end, options) {
         if (from.timeZoneId !== to.timeZoneId) {
             throw new RangeError(`formatRange: both ends must share a zone (${from.timeZoneId} vs ${to.timeZoneId})`);
         }
-        return dateTimeFormat(locale, { ...intl, timeZone: from.timeZoneId }).formatRange(from.epochMilliseconds, to.epochMilliseconds);
+        return rangeFormatter(dateTimeFormat(locale, { ...intl, timeZone: from.timeZoneId })).formatRange(from.epochMilliseconds, to.epochMilliseconds);
     }
     if (isZonedDateTime(from) || isZonedDateTime(to) || isPlainDate(from) !== isPlainDate(to)) {
         throw new RangeError('formatRange: both ends must be the same kind of value');
@@ -560,6 +577,6 @@ export function formatRange(start, end, options) {
     else if (intl.timeZoneName !== undefined) {
         throw new RangeError('formatRange: a PlainDateTime has no time zone; drop the "timeZoneName" option');
     }
-    return dateTimeFormat(locale, { ...intl, timeZone: 'UTC' }).formatRange(from.toZonedDateTime('UTC').epochMilliseconds, to.toZonedDateTime('UTC').epochMilliseconds);
+    return rangeFormatter(dateTimeFormat(locale, { ...intl, timeZone: 'UTC' })).formatRange(from.toZonedDateTime('UTC').epochMilliseconds, to.toZonedDateTime('UTC').epochMilliseconds);
 }
 //# sourceMappingURL=format.js.map

@@ -1,6 +1,6 @@
 {
   "name": "@arki/date",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Date and time math for ARKI — Temporal-based calendar dates, instants, zoned date-times, durations and interval algebra with a small, explicit API. Runs on Node, Bun, Deno, browsers and edge runtimes.",
   "license": "MIT",
   "repository": {
@@ -115,10 +115,10 @@
       "import": "./dist/react.js",
       "default": "./dist/react.js"
     },
-    "./serialize": {
-      "types": "./dist/serialize.d.ts",
-      "import": "./dist/serialize.js",
-      "default": "./dist/serialize.js"
+    "./orpc": {
+      "types": "./dist/orpc.d.ts",
+      "import": "./dist/orpc.js",
+      "default": "./dist/orpc.js"
     },
     "./tanstack": {
       "types": "./dist/tanstack.d.ts",
@@ -137,18 +137,23 @@
     "!src/**/__tests__/**",
     "README.md",
     "LICENSE",
+    "llms.txt",
+    "docs/**",
+    "AGENTS.md",
     "package.json"
   ],
   "dependencies": {
-    "@arki/clock": "0.0.2",
+    "@arki/clock": "0.2.0",
+    "@arki/failure": "0.3.0",
+    "@arki/schema": "0.3.0",
     "temporal-polyfill": "1.0.5"
   },
   "peerDependencies": {
     "@orpc/client": "^1.15.5",
-    "@tanstack/react-router": "1.170.41",
-    "react": "19.3.0",
+    "@tanstack/react-router": "^1.170.45",
+    "react": "^19.3.0",
     "superjson": "latest",
-    "zod": "4.6.5"
+    "zod": "^4.6.5"
   },
   "peerDependenciesMeta": {
     "@orpc/client": {

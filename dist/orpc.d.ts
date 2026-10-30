@@ -36,4 +36,4 @@ export declare const temporalJsonSerializers: readonly StandardRPCCustomJsonSeri
  * types. Registering twice replaces the earlier entry, so module reloads are safe.
  */
 export declare function registerTemporalTypes(superjson: Pick<typeof SuperJSON, 'registerCustom'>): void;
-//# sourceMappingURL=serialize.d.ts.map
+//# sourceMappingURL=orpc.d.ts.map

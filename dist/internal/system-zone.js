@@ -1,4 +1,14 @@
 import { Temporal } from '../types.js';
+/** Is this a time zone the runtime knows (IANA name or fixed offset)? Re-exported from `zone`. */
+export function isValidTimeZone(id) {
+    try {
+        new Temporal.ZonedDateTime(0n, id);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 let systemZone;
 let systemZoneCheckedAt = 0;
 const SYSTEM_ZONE_TTL_MS = 1000;

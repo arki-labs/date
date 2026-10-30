@@ -19,10 +19,20 @@ export function dateTimeFormat(locale, options) {
 export function numberFormat(locale, options) {
     return remember(numberFormats, `${locale}:${JSON.stringify(options)}`, INTL_CACHE_LIMIT, () => new Intl.NumberFormat(locale, options));
 }
+/** True when this engine has the named `Intl` constructor (Hermes V1 has only `DateTimeFormat`, `NumberFormat` and `Collator`). */
+function hasIntl(name) {
+    return typeof Reflect.get(Intl, name) === 'function';
+}
+function requireIntl(name) {
+    if (!hasIntl(name))
+        throw new RangeError(`Intl.${name} is not available in this runtime`);
+}
 export function listFormat(locale, options) {
+    requireIntl('ListFormat');
     return remember(listFormats, `${locale}:${JSON.stringify(options)}`, INTL_CACHE_LIMIT, () => new Intl.ListFormat(locale, options));
 }
 export function relativeTimeFormat(locale, options) {
+    requireIntl('RelativeTimeFormat');
     return remember(relativeTimeFormats, `${locale}:${JSON.stringify(options)}`, INTL_CACHE_LIMIT, () => new Intl.RelativeTimeFormat(locale, options));
 }
 /** `Intl.DurationFormat` is missing on some engines (Hermes, Node ≤ 22): callers check `hasDurationFormat()` first. */

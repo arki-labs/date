@@ -1,0 +1,29 @@
+[
+  {
+    "code": "date.invalid_native_date",
+    "package": "@arki/date",
+    "kind": "failure",
+    "what": "A native `Date` that holds no calendar date: an Invalid Date (`new Date('nope')`). Every valid `Date` fits a Temporal date.",
+    "fix": "Check the picker or API that built the `Date`. Reject the value or ask for another.",
+    "verify": "bun run test -- src/interop.test.ts",
+    "source": "src/failures.ts:133"
+  },
+  {
+    "code": "date.invalid_text",
+    "package": "@arki/date",
+    "kind": "failure",
+    "what": "Text the pattern or ISO reader refused. `data.reason` says why; `data.input` is a bounded copy of the text.",
+    "fix": "Show the user the reason and ask for the text again, or read it with another pattern. A bad pattern is a bug and throws instead.",
+    "verify": "bun run test -- src/parse.test.ts src/iso.test.ts",
+    "source": "src/failures.ts:119"
+  },
+  {
+    "code": "date.unknown_time_zone",
+    "package": "@arki/date",
+    "kind": "failure",
+    "what": "A time-zone name the runtime does not know. `data.timeZone` is a bounded copy of the name.",
+    "fix": "Ask for an IANA name such as `Europe/Bucharest` or a fixed offset such as `+02:00`. Check a name first with `isValidTimeZone`.",
+    "verify": "bun run test -- src/parse.test.ts src/interop.test.ts",
+    "source": "src/failures.ts:147"
+  }
+]

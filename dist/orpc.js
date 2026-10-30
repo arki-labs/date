@@ -86,4 +86,4 @@ export function registerTemporalTypes(superjson) {
         }, codec.name);
     }
 }
-//# sourceMappingURL=serialize.js.map
+//# sourceMappingURL=orpc.js.map

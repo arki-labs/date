@@ -5,7 +5,11 @@
  */
 import { instant, plainDateTime } from './core.js';
 import { Temporal } from './types.js';
-/** The same instant, shown in another zone. */
+/**
+ * The same instant, shown in another zone. `timeZone` is the caller's own value:
+ * an unknown name throws `RangeError`. Check zone text from outside with
+ * `isValidTimeZone` first, or read it with a `parse*` door that returns `UnknownTimeZone`.
+ */
 export function inZone(value, timeZone) {
     // A Date goes straight to its ZonedDateTime, without an intermediate Instant.
     if (value instanceof Date) {
@@ -36,14 +40,5 @@ export function offset(value) {
 export function offsetMinutes(value) {
     return value.offsetNanoseconds / 60_000_000_000;
 }
-/** Is this a time zone the runtime knows (IANA name or fixed offset)? */
-export function isValidTimeZone(id) {
-    try {
-        new Temporal.ZonedDateTime(0n, id);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
+export { isValidTimeZone } from './internal/system-zone.js';
 //# sourceMappingURL=zone.js.map

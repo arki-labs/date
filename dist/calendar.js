@@ -177,9 +177,12 @@ function isMinimalDays(n) {
 /**
  * The week rules a locale uses, from `Intl.Locale` week info (`en-US` →
  * Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week
- * info (Node ≤ 22, Hermes) get `fallback`, ISO weeks by default.
+ * info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO
+ * weeks by default.
  */
 export function weekRulesFor(locale, fallback = ISO_WEEK) {
+    if (typeof Reflect.get(Intl, 'Locale') !== 'function')
+        return fallback;
     const tag = new Intl.Locale(locale);
     // `getWeekInfo()` is the standard method; JavaScriptCore shipped it first as a `weekInfo` accessor.
     const info = typeof tag.getWeekInfo === 'function' ? tag.getWeekInfo() : Reflect.get(tag, 'weekInfo');

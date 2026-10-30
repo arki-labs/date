@@ -5,7 +5,11 @@
  */
 import type { ZonedOptions } from './core.js';
 import type { PlainDate, Timeline, TimeParts, ZonedDateTime } from './types.js';
-/** The same instant, shown in another zone. */
+/**
+ * The same instant, shown in another zone. `timeZone` is the caller's own value:
+ * an unknown name throws `RangeError`. Check zone text from outside with
+ * `isValidTimeZone` first, or read it with a `parse*` door that returns `UnknownTimeZone`.
+ */
 export declare function inZone(value: Timeline | Date, timeZone: string): ZonedDateTime;
 /** The same instant in UTC. */
 export declare function toUTC(value: Timeline | Date): ZonedDateTime;
@@ -17,6 +21,5 @@ export declare function atTime(date: PlainDate, time: Partial<TimeParts>, timeZo
 export declare function offset(value: ZonedDateTime): string;
 /** The UTC offset in minutes (east positive). */
 export declare function offsetMinutes(value: ZonedDateTime): number;
-/** Is this a time zone the runtime knows (IANA name or fixed offset)? */
-export declare function isValidTimeZone(id: string): boolean;
+export { isValidTimeZone } from './internal/system-zone.js';
 //# sourceMappingURL=zone.d.ts.map

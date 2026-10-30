@@ -60,6 +60,7 @@ export declare function formatIntl(value: Point | Date, options?: FormatIntlOpti
  * `formatRange(plainDate('2026-05-20'), plainDate('2026-05-24'), { dateStyle: 'medium' })`
  * → `May 20 – 24, 2026`. Both ends follow the same rules as `formatIntl`
  * and must be the same kind of value; the end may precede the start.
+ * Engines without `formatRange` (Hermes V1) throw a `RangeError`.
  */
 export declare function formatRange(start: Point | Date, end: Point | Date, options?: FormatIntlOptions): string;
 //# sourceMappingURL=format.d.ts.map

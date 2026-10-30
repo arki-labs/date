@@ -4,7 +4,9 @@
  * exist on purpose: `fromDate` keeps the *instant*, `fromPickerDate` keeps the
  * *calendar fields* a picker showed the user.
  */
+import type { UnknownTimeZone } from './failures.js';
 import type { Instant, PlainDate, Timeline } from './types.js';
+import { InvalidNativeDate } from './failures.js';
 /** The instant a `Date` represents. */
 export declare function fromDate(value: Date): Instant;
 /** A fresh mutable `Date` at the same instant (sub-millisecond precision truncated). */
@@ -21,8 +23,12 @@ export type DateBasis = {
     readonly basis: 'zone';
     readonly timeZone: string;
 };
-/** The calendar date a picker selected, read from the `Date`'s fields in the stated basis. */
-export declare function fromPickerDate(value: Date, basis?: DateBasis): PlainDate;
+/**
+ * The calendar date a picker selected, read from the `Date`'s fields in the stated basis.
+ * A picker's `Date` is outside input, so this never throws on it: an Invalid Date returns
+ * `InvalidNativeDate`, and an unknown `timeZone` returns `UnknownTimeZone`.
+ */
+export declare function fromPickerDate(value: Date, basis?: DateBasis): PlainDate | InvalidNativeDate | UnknownTimeZone;
 /**
  * A `Date` whose fields in the stated basis show the given calendar date
  * (first valid time of that day). Throws if the day does not exist in that

@@ -56,7 +56,8 @@ export declare function easter(year: number, rite?: EasterRite): PlainDate;
 /**
  * The week rules a locale uses, from `Intl.Locale` week info (`en-US` →
  * Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week
- * info (Node ≤ 22, Hermes) get `fallback`, ISO weeks by default.
+ * info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO
+ * weeks by default.
  */
 export declare function weekRulesFor(locale: string, fallback?: WeekRules): WeekRules;
 //# sourceMappingURL=calendar.d.ts.map

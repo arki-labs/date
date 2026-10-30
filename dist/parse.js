@@ -1,8 +1,9 @@
 /**
  * Pattern parsing: the inverse of `format`. `parseDate`, `parseDateTime` and
  * `parseZoned` read text laid out by a Unicode LDML pattern (the date-fns v4
- * token subset below) and return a Temporal value; the `tryParse…` doors
- * return `undefined` for text that does not match.
+ * token subset below) and return a Temporal value, or an `InvalidDateText`
+ * failure for text that does not match. Outside text always goes through
+ * these doors; the builders (`plainDate`, `zoned`, …) take the caller's own values.
  *
  * Policies (one for the whole package):
  * - Round trip: for every supported token, `parseX(format(value, p), p)`
@@ -18,33 +19,44 @@
  *   sign (an ISO year), `yy` is 2000-2099, `yyy` 3+ digits, `yyyy` exactly 4.
  *   Ordinals (`do`, `Mo`…), quarters, eras, week-numbering, zone names and the
  *   `P`/`p` presets are not parsed: they throw like any unknown letter.
- * - Fail loud with a `RangeError` whose message starts with the function name:
- *   text the pattern does not account for (missing or leftover text, with its
- *   position), an unknown word, an invalid date or time (Feb 30, hour 24,
- *   minute 60 — values are built with `overflow: 'reject'`), a weekday that
- *   does not match the date, two tokens that disagree, `h`/`K` without an
- *   AM/PM token, and an unsupported pattern letter.
+ * - Bad text is returned, never thrown: an `InvalidDateText` failure whose
+ *   `data.reason` is one of `DATE_TEXT_REASONS` (missing or leftover text, an
+ *   unknown word, an invalid date or time such as Feb 30, hour 24 or minute
+ *   60 — values are built with `overflow: 'reject'` — a weekday that does not
+ *   match the date, two tokens that disagree, an offset out of range) and
+ *   `data.input` is a bounded copy of the text. An unknown time zone name
+ *   returns `UnknownTimeZone`.
+ * - A bad pattern is the caller's bug and throws `RangeError` with the function
+ *   name first: `h`/`K` without an AM/PM token, an unsupported pattern letter,
+ *   a pattern with no year, month or day.
  * - `parseDate` needs a year plus month and day (or a day of year). Time
  *   tokens are read and validated, then dropped. `parseDateTime` fills missing
  *   time fields with zero. Both refuse offset tokens: an offset names an exact
  *   instant, so use `parseZoned`, which shows that instant in the given zone.
  *   Without an offset, `parseZoned` resolves the wall clock in the zone with
  *   `disambiguation` (default `'compatible'`, as `zoned` does).
- * - `tryParse…` returns `undefined` only when the text is wrong. A bad
- *   pattern or time zone is a programming error and still throws.
  * - Default locale is `'en-US'`.
  */
+import { boundedInput, InvalidDateText, unknownTimeZone } from './failures.js';
 import { format } from './format.js';
 import { Temporal } from './types.js';
 import { isValidTimeZone } from './zone.js';
 const DEFAULT_LOCALE = 'en-US';
+/** Raised inside the readers for text the pattern refuses; the public doors turn it into a returned failure. */
+class TextProblem extends Error {
+    reason;
+    constructor(reason) {
+        super(reason);
+        this.name = 'TextProblem';
+        this.reason = reason;
+    }
+}
 // ---------------------------------------------------------------------------
 // matchers
-function assign(fields, field, value, operation, token) {
+function assign(fields, field, value) {
     const previous = fields[field];
-    if (previous !== undefined && previous !== value) {
-        throw new RangeError(`${operation}: "${token}" reads ${field} ${value}, which conflicts with ${previous} read earlier`);
-    }
+    if (previous !== undefined && previous !== value)
+        throw new TextProblem('conflicting_tokens');
     fields[field] = value;
 }
 /** Text matching the regular expression `source` at the current position. */
@@ -62,28 +74,28 @@ function regex(source, expected, apply) {
         },
     };
 }
-function digits(source, expected, field, operation, token, map = value => value) {
-    return regex(source, `${expected} for "${token}"`, (match, fields) => {
-        assign(fields, field, map(Number(match)), operation, token);
+function digits(source, expected, field, map = value => value) {
+    return regex(source, expected, (match, fields) => {
+        assign(fields, field, map(Number(match)));
     });
 }
 /** 1-2 digits for a single letter, exactly 2 for a doubled one. */
-function oneOrTwo(token, what, field, operation) {
+function oneOrTwo(token, what, field) {
     return token.length === 1
-        ? digits(String.raw `\d{1,2}`, `a 1-2 digit ${what}`, field, operation, token)
-        : digits(String.raw `\d{2}`, `a 2-digit ${what}`, field, operation, token);
+        ? digits(String.raw `\d{1,2}`, `a 1-2 digit ${what}`, field)
+        : digits(String.raw `\d{2}`, `a 2-digit ${what}`, field);
 }
 /** One of `words` (case-insensitive, longest first so a prefix never wins). */
-function words(entries, expected, field, operation, token, locale) {
+function words(entries, expected, field, token, locale) {
     const candidates = entries
         .map(([word, value]) => [word.toLocaleLowerCase(locale), value])
-        .toSorted((left, right) => right[0].length - left[0].length);
+        .sort((left, right) => right[0].length - left[0].length);
     return {
         expected: `${expected} for "${token}"`,
         read: (text, at, fields) => {
             for (const [word, value] of candidates) {
                 if (text.slice(at, at + word.length).toLocaleLowerCase(locale) === word) {
-                    assign(fields, field, value, operation, token);
+                    assign(fields, field, value);
                     return at + word.length;
                 }
             }
@@ -127,7 +139,7 @@ const OFFSET_SOURCES = {
     2: String.raw `[+-]\d{4}`,
     3: String.raw `[+-]\d{2}:\d{2}`,
 };
-function offsetMatcher(token, operation) {
+function offsetMatcher(token) {
     const source = OFFSET_SOURCES[token.length];
     if (source === undefined)
         return undefined;
@@ -135,103 +147,97 @@ function offsetMatcher(token, operation) {
     const shape = token.length === 3 ? '+02:00' : token.length === 2 ? '+0200' : '+02';
     return regex(allowsZ ? `Z|${source}` : source, `an offset like ${shape}${allowsZ ? ' or Z' : ''} for "${token}"`, (match, fields) => {
         if (match === 'Z') {
-            assign(fields, 'offset', 0, operation, token);
+            assign(fields, 'offset', 0);
             return;
         }
         const numbers = match.slice(1).replace(':', '');
         const hours = Number(numbers.slice(0, 2));
         const minutes = numbers.length > 2 ? Number(numbers.slice(2)) : 0;
         if (hours > 23 || minutes > 59)
-            throw new RangeError(`${operation}: offset "${match}" is out of range`);
-        assign(fields, 'offset', (match.startsWith('-') ? -1 : 1) * (hours * 60 + minutes), operation, token);
+            throw new TextProblem('offset_out_of_range');
+        assign(fields, 'offset', (match.startsWith('-') ? -1 : 1) * (hours * 60 + minutes));
     });
 }
-function yearMatcher(token, operation) {
+function yearMatcher(token) {
     switch (token.length) {
         case 1: {
-            return digits(String.raw `[+-]?\d+`, 'a year', 'year', operation, token);
+            return digits(String.raw `[+-]?\d+`, 'a year', 'year');
         }
         case 2: {
-            return digits(String.raw `\d{2}`, 'a 2-digit year', 'year', operation, token, value => 2000 + value);
+            return digits(String.raw `\d{2}`, 'a 2-digit year', 'year', value => 2000 + value);
         }
         case 3: {
-            return digits(String.raw `\d{3,}`, 'a year of 3+ digits', 'year', operation, token);
+            return digits(String.raw `\d{3,}`, 'a year of 3+ digits', 'year');
         }
         default: {
-            return digits(String.raw `\d{${token.length}}`, `a ${token.length}-digit year`, 'year', operation, token);
+            return digits(String.raw `\d{${token.length}}`, `a ${token.length}-digit year`, 'year');
         }
     }
 }
-function tokenMatcher(token, operation, locale) {
+function tokenMatcher(token, locale) {
     const length = token.length;
     switch (token.charAt(0)) {
         case 'y': {
-            return yearMatcher(token, operation);
+            return yearMatcher(token);
         }
         case 'M':
         case 'L': {
             if (length <= 2)
-                return oneOrTwo(token, 'month', 'month', operation);
+                return oneOrTwo(token, 'month', 'month');
             if (length <= 4)
-                return words(monthWords(token, locale), 'a month name', 'month', operation, token, locale);
+                return words(monthWords(token, locale), 'a month name', 'month', token, locale);
             return undefined;
         }
         case 'd': {
-            return length <= 2 ? oneOrTwo(token, 'day', 'day', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'day', 'day') : undefined;
         }
         case 'D': {
             if (length === 1)
-                return digits(String.raw `\d{1,3}`, 'a 1-3 digit day of year', 'dayOfYear', operation, token);
+                return digits(String.raw `\d{1,3}`, 'a 1-3 digit day of year', 'dayOfYear');
             if (length === 3)
-                return digits(String.raw `\d{3}`, 'a 3-digit day of year', 'dayOfYear', operation, token);
+                return digits(String.raw `\d{3}`, 'a 3-digit day of year', 'dayOfYear');
             return undefined;
         }
         case 'E': {
-            return length <= 4
-                ? words(weekdayWords(token, locale), 'a weekday name', 'weekday', operation, token, locale)
-                : undefined;
+            return length <= 4 ? words(weekdayWords(token, locale), 'a weekday name', 'weekday', token, locale) : undefined;
         }
         case 'i': {
             if (length <= 2)
-                return oneOrTwo(token, 'weekday number', 'weekday', operation);
-            return length <= 4
-                ? words(weekdayWords(token, locale), 'a weekday name', 'weekday', operation, token, locale)
-                : undefined;
+                return oneOrTwo(token, 'weekday number', 'weekday');
+            return length <= 4 ? words(weekdayWords(token, locale), 'a weekday name', 'weekday', token, locale) : undefined;
         }
         case 'a': {
-            return length <= 4
-                ? words(periodWords(token, locale), 'AM or PM', 'period', operation, token, locale)
-                : undefined;
+            return length <= 4 ? words(periodWords(token, locale), 'AM or PM', 'period', token, locale) : undefined;
         }
         case 'H': {
-            return length <= 2 ? oneOrTwo(token, 'hour', 'hour', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'hour', 'hour') : undefined;
         }
         case 'k': {
-            return length <= 2 ? oneOrTwo(token, 'hour', 'hour24', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'hour', 'hour24') : undefined;
         }
         case 'h': {
-            return length <= 2 ? oneOrTwo(token, 'hour', 'hour12', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'hour', 'hour12') : undefined;
         }
         case 'K': {
-            return length <= 2 ? oneOrTwo(token, 'hour', 'hour11', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'hour', 'hour11') : undefined;
         }
         case 'm': {
-            return length <= 2 ? oneOrTwo(token, 'minute', 'minute', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'minute', 'minute') : undefined;
         }
         case 's': {
-            return length <= 2 ? oneOrTwo(token, 'second', 'second', operation) : undefined;
+            return length <= 2 ? oneOrTwo(token, 'second', 'second') : undefined;
         }
         case 'S': {
             if (length > 9)
                 return undefined;
             // Right-padded to nanoseconds: "5" for "S" is 500 ms.
             return regex(String.raw `\d{${length}}`, `${length} fraction digit(s) for "${token}"`, (match, fields) => {
-                assign(fields, 'fraction', Number(match.padEnd(9, '0')), operation, token);
+                assign(fields, 'fraction', Number(match.padEnd(9, '0')));
             });
         }
         case 'X':
         case 'x': {
-            return offsetMatcher(token, operation);
+            return offsetMatcher(token);
         }
         default: {
             return undefined;
@@ -261,7 +267,7 @@ function compile(operation, pattern, options) {
         }
         else if (LATIN_LETTER.test(chunk.charAt(0))) {
             // Ordinal forms (`do`, `Mo`, …) are not parsed.
-            const matcher = chunk.endsWith('o') ? undefined : tokenMatcher(chunk, operation, locale);
+            const matcher = chunk.endsWith('o') ? undefined : tokenMatcher(chunk, locale);
             if (matcher === undefined) {
                 throw new RangeError(`${operation}: unsupported pattern token "${chunk}"; wrap literal text in single quotes`);
             }
@@ -308,53 +314,47 @@ function readFields(plan, text) {
     let at = 0;
     for (const matcher of plan.matchers) {
         const next = matcher.read(text, at, fields);
-        if (next === undefined) {
-            throw new RangeError(`${plan.operation}: expected ${matcher.expected} at position ${at} of "${text}" (pattern "${plan.pattern}")`);
-        }
+        if (next === undefined)
+            throw new TextProblem('no_match');
         at = next;
     }
-    if (at < text.length) {
-        throw new RangeError(`${plan.operation}: unexpected text "${text.slice(at)}" at position ${at} of "${text}" (pattern "${plan.pattern}")`);
-    }
+    if (at < text.length)
+        throw new TextProblem('trailing_text');
     return fields;
 }
-/** Runs a Temporal constructor and prefixes its `RangeError` with the operation name. */
-function build(operation, what, construct) {
+/** Runs a Temporal constructor; its `RangeError` means the text named a value that does not exist. */
+function build(reason, construct) {
     try {
         return construct();
     }
     catch (error) {
         if (error instanceof RangeError)
-            throw new RangeError(`${operation}: ${what} is invalid`, { cause: error });
+            throw new TextProblem(reason);
         throw error;
     }
 }
 function two(value) {
     return String(value).padStart(2, '0');
 }
-function toDate(plan, fields) {
-    const { operation } = plan;
+function toDate(fields) {
     const { year = 0, dayOfYear } = fields;
     let date;
     if (dayOfYear === undefined) {
         const { month = 0, day = 0 } = fields;
-        date = build(operation, `date ${year}-${two(month)}-${two(day)}`, () => Temporal.PlainDate.from({ year, month, day }, { overflow: 'reject' }));
+        date = build('invalid_date', () => Temporal.PlainDate.from({ year, month, day }, { overflow: 'reject' }));
     }
     else {
-        const first = build(operation, `year ${year}`, () => Temporal.PlainDate.from({ year, month: 1, day: 1 }, { overflow: 'reject' }));
-        if (dayOfYear < 1 || dayOfYear > first.daysInYear) {
-            throw new RangeError(`${operation}: day of year ${dayOfYear} is out of range for ${year} (1-${first.daysInYear})`);
-        }
+        const first = build('invalid_date', () => Temporal.PlainDate.from({ year, month: 1, day: 1 }, { overflow: 'reject' }));
+        if (dayOfYear < 1 || dayOfYear > first.daysInYear)
+            throw new TextProblem('invalid_date');
         date = first.add({ days: dayOfYear - 1 });
     }
-    if (fields.weekday !== undefined && fields.weekday !== date.dayOfWeek) {
-        throw new RangeError(`${operation}: weekday ${fields.weekday} does not match ${date.toString()}, which is weekday ${date.dayOfWeek} (1 = Monday)`);
-    }
+    if (fields.weekday !== undefined && fields.weekday !== date.dayOfWeek)
+        throw new TextProblem('weekday_mismatch');
     return date;
 }
 /** The 0-23 hour each hour token implies; every one present must agree. */
-function hourOf(plan, fields) {
-    const { operation } = plan;
+function hourOf(fields) {
     const { hour, hour24, hour12, hour11, period } = fields;
     const pm = period === 1;
     const readings = [];
@@ -362,29 +362,29 @@ function hourOf(plan, fields) {
         readings.push(hour);
     if (hour24 !== undefined) {
         if (hour24 < 1 || hour24 > 24)
-            throw new RangeError(`${operation}: hour ${hour24} is out of range for "k" (1-24)`);
+            throw new TextProblem('invalid_time');
         readings.push(hour24 % 24);
     }
     if (hour12 !== undefined) {
         if (hour12 < 1 || hour12 > 12)
-            throw new RangeError(`${operation}: hour ${hour12} is out of range for "h" (1-12)`);
+            throw new TextProblem('invalid_time');
         readings.push((hour12 % 12) + (pm ? 12 : 0));
     }
     if (hour11 !== undefined) {
         if (hour11 > 11)
-            throw new RangeError(`${operation}: hour ${hour11} is out of range for "K" (0-11)`);
+            throw new TextProblem('invalid_time');
         readings.push(hour11 + (pm ? 12 : 0));
     }
     const [first = 0] = readings;
     if (readings.some(reading => reading !== first) || (period !== undefined && first >= 12 !== pm)) {
-        throw new RangeError(`${operation}: the hour and AM/PM tokens disagree in pattern "${plan.pattern}"`);
+        throw new TextProblem('conflicting_tokens');
     }
     return first;
 }
-function toTime(plan, fields) {
-    const hour = hourOf(plan, fields);
+function toTime(fields) {
+    const hour = hourOf(fields);
     const { minute = 0, second = 0, fraction = 0 } = fields;
-    return build(plan.operation, `time ${two(hour)}:${two(minute)}:${two(second)}`, () => Temporal.PlainTime.from({
+    return build('invalid_time', () => Temporal.PlainTime.from({
         hour,
         minute,
         second,
@@ -393,90 +393,75 @@ function toTime(plan, fields) {
         nanosecond: fraction % 1000,
     }, { overflow: 'reject' }));
 }
-function toDateTime(plan, fields) {
-    return toDate(plan, fields).toPlainDateTime(toTime(plan, fields));
+function toDateTime(fields) {
+    return toDate(fields).toPlainDateTime(toTime(fields));
 }
 function offsetId(minutes) {
     const absolute = Math.abs(minutes);
     return `${minutes < 0 ? '-' : '+'}${two(Math.trunc(absolute / 60))}:${two(absolute % 60)}`;
 }
-function toZoned(plan, fields, timeZone, options) {
-    const wall = toDateTime(plan, fields);
+function toZoned(fields, timeZone, options) {
+    const wall = toDateTime(fields);
     if (fields.offset !== undefined)
         return wall.toZonedDateTime(offsetId(fields.offset)).withTimeZone(timeZone);
-    return build(plan.operation, `wall time ${wall.toString()} in ${timeZone}`, () => wall.toZonedDateTime(timeZone, { disambiguation: options?.disambiguation ?? 'compatible' }));
+    return build('invalid_wall_time', () => wall.toZonedDateTime(timeZone, { disambiguation: options?.disambiguation ?? 'compatible' }));
 }
-function zonedPlan(pattern, timeZone, options) {
-    if (!isValidTimeZone(timeZone))
-        throw new RangeError(`parseZoned: unknown time zone "${timeZone}"`);
-    return compile('parseZoned', pattern, options);
-}
-/** `undefined` for text errors only; pattern errors are raised before `read` runs. */
-function attempt(read) {
-    try {
-        return read();
-    }
-    catch (error) {
-        if (error instanceof RangeError)
-            return undefined;
-        throw error;
-    }
+/** The failure for text the pattern refused; anything else (a bug) keeps throwing. */
+function refused(operation, text, error) {
+    if (error instanceof TextProblem)
+        return InvalidDateText({ operation, reason: error.reason, ...boundedInput(text) });
+    throw error;
 }
 // ---------------------------------------------------------------------------
 // public API
 /**
  * A calendar date read from `text` laid out by `pattern`, e.g.
- * `parseDate('Mar 5, 2026', 'MMM d, yyyy')`. The pattern needs a year and a
+ * `parseDate('Mar 5, 2026', 'MMM d, yyyy')`, or an `InvalidDateText` failure. The pattern needs a year and a
  * month + day (or a day of year `D`). Time tokens are read, validated and
- * dropped; offset tokens are refused (use `parseZoned`).
+ * dropped; offset tokens are refused (use `parseZoned`). A bad pattern throws.
  */
 export function parseDate(text, pattern, options) {
     const plan = compile('parseDate', pattern, options);
-    const fields = readFields(plan, text);
-    toTime(plan, fields);
-    return toDate(plan, fields);
+    try {
+        const fields = readFields(plan, text);
+        toTime(fields);
+        return toDate(fields);
+    }
+    catch (error) {
+        return refused('parseDate', text, error);
+    }
 }
 /**
  * A wall-clock date and time read from `text` laid out by `pattern`, e.g.
- * `parseDateTime('03/05/2026 9:30 PM', 'MM/dd/yyyy h:mm a')`. Missing time
- * fields are zero; offset tokens are refused (use `parseZoned`).
+ * `parseDateTime('03/05/2026 9:30 PM', 'MM/dd/yyyy h:mm a')`, or an `InvalidDateText` failure. Missing time
+ * fields are zero; offset tokens are refused (use `parseZoned`). A bad pattern throws.
  */
 export function parseDateTime(text, pattern, options) {
     const plan = compile('parseDateTime', pattern, options);
-    const fields = readFields(plan, text);
-    return toDateTime(plan, fields);
+    try {
+        return toDateTime(readFields(plan, text));
+    }
+    catch (error) {
+        return refused('parseDateTime', text, error);
+    }
 }
 /**
- * A moment in `timeZone` read from `text` laid out by `pattern`. With an
- * offset token (`X`, `x`…) the text names an exact instant, which is shown in
- * `timeZone`. Without one, the text is a wall-clock time in `timeZone`;
- * skipped or repeated times resolve with `disambiguation` (default `'compatible'`).
+ * A moment in `timeZone` read from `text` laid out by `pattern`, or an
+ * `InvalidDateText` failure, or `UnknownTimeZone` when the runtime does not
+ * know `timeZone`. With an offset token (`X`, `x`…) the text names an exact
+ * instant, which is shown in `timeZone`. Without one, the text is a wall-clock
+ * time in `timeZone`; skipped or repeated times resolve with `disambiguation`
+ * (default `'compatible'`, and `'reject'` returns `invalid_wall_time`). A bad pattern throws.
  */
 export function parseZoned(text, pattern, timeZone, options) {
-    const plan = zonedPlan(pattern, timeZone, options);
-    const fields = readFields(plan, text);
-    return toZoned(plan, fields, timeZone, options);
-}
-/** `parseDate` that returns `undefined` when the text does not match. A bad pattern still throws. */
-export function tryParseDate(text, pattern, options) {
-    const plan = compile('parseDate', pattern, options);
-    return attempt(() => {
-        const fields = readFields(plan, text);
-        toTime(plan, fields);
-        return toDate(plan, fields);
-    });
-}
-/** `parseDateTime` that returns `undefined` when the text does not match. A bad pattern still throws. */
-export function tryParseDateTime(text, pattern, options) {
-    const plan = compile('parseDateTime', pattern, options);
-    return attempt(() => toDateTime(plan, readFields(plan, text)));
-}
-/**
- * `parseZoned` that returns `undefined` when the text does not match or names
- * a wall time that `disambiguation: 'reject'` refuses. A bad pattern or time zone still throws.
- */
-export function tryParseZoned(text, pattern, timeZone, options) {
-    const plan = zonedPlan(pattern, timeZone, options);
-    return attempt(() => toZoned(plan, readFields(plan, text), timeZone, options));
+    const plan = compile('parseZoned', pattern, options);
+    if (!isValidTimeZone(timeZone))
+        return unknownTimeZone(timeZone);
+    try {
+        return toZoned(readFields(plan, text), timeZone, options);
+    }
+    catch (error) {
+        return refused('parseZoned', text, error);
+    }
 }
 //# sourceMappingURL=parse.js.map
