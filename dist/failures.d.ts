@@ -8,9 +8,9 @@
  */
 import type { StandardSchemaV1 } from '@arki/schema';
 /** The parsing operations that return {@link InvalidDateText}. Written once; the union below comes from it. */
-export declare const DATE_TEXT_OPERATIONS: readonly ['parseDate', 'parseDateTime', 'parseZoned', 'parseISO'];
+export declare const DATE_TEXT_OPERATIONS: readonly ['parseDate', 'parseDateTime', 'parseZoned', 'parseISO', 'parseDuration'];
 /** Why the text was refused. Written once; the union below comes from it. */
-export declare const DATE_TEXT_REASONS: readonly ['no_match', 'trailing_text', 'conflicting_tokens', 'invalid_date', 'invalid_time', 'invalid_wall_time', 'weekday_mismatch', 'offset_out_of_range', 'not_iso'];
+export declare const DATE_TEXT_REASONS: readonly ['no_match', 'trailing_text', 'conflicting_tokens', 'invalid_date', 'invalid_time', 'invalid_wall_time', 'weekday_mismatch', 'offset_out_of_range', 'not_iso', 'invalid_duration'];
 /** Why a native `Date` is not a calendar date. */
 export declare const NATIVE_DATE_REASONS: readonly ['invalid_date'];
 export type DateTextOperation = (typeof DATE_TEXT_OPERATIONS)[number];

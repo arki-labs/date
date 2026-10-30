@@ -39,9 +39,9 @@
  */
 import { boundedInput, InvalidDateText, unknownTimeZone } from './failures.js';
 import { format } from './format.js';
+import { resolveLocale } from './internal/locale.js';
 import { Temporal } from './types.js';
 import { isValidTimeZone } from './zone.js';
-const DEFAULT_LOCALE = 'en-US';
 /** Raised inside the readers for text the pattern refuses; the public doors turn it into a returned failure. */
 class TextProblem extends Error {
     reason;
@@ -255,7 +255,7 @@ function unquote(chunk) {
     return (inner?.[1] ?? chunk).replaceAll(DOUBLE_QUOTE, "'");
 }
 function compile(operation, pattern, options) {
-    const locale = options?.locale ?? DEFAULT_LOCALE;
+    const locale = resolveLocale(options?.locale);
     const matchers = [];
     const letters = new Set();
     for (const chunk of pattern.match(TOKENS) ?? []) {

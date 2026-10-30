@@ -12,12 +12,21 @@
  * - Text defaults to the `'en-US'` locale so server and client render the same.
  */
 import type { Amount, Duration, DurationUnit, Ordering, PlainDate, RoundingMode, Unit, ZonedDateTime } from './types.js';
+import { InvalidDateText } from './failures.js';
 /** The anchor Temporal needs to measure calendar units (months have 28–31 days, days 23–25 hours). */
 export type RelativeToOptions = Readonly<{
     relativeTo?: PlainDate | ZonedDateTime;
 }>;
-/** A `Duration` from an ISO 8601 string (`P1DT2H`), an `Amount` (quarters become 3 months) or a `Duration` (returned as-is). */
+/**
+ * A `Duration` from an ISO 8601 string (`P1DT2H`), an `Amount` (quarters become 3 months) or a `Duration` (returned as-is).
+ * A bad string throws `RangeError`: read text from outside with {@link parseDuration} instead.
+ */
 export declare function duration(input: string | Amount | Duration): Duration;
+/**
+ * A `Duration` read from outside ISO 8601 text such as `P1DT2H`, or an `InvalidDateText` failure
+ * (`data.operation` `'parseDuration'`, `data.reason` `'invalid_duration'`) when the text is not a duration.
+ */
+export declare function parseDuration(text: string): Duration | InvalidDateText;
 /** `n` years. `n` must be an integer. */
 export declare function years(n: number): Duration;
 /** `n` months. `n` must be an integer. */

@@ -1,6 +1,6 @@
 {
   "package": "@arki/date",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "entries": [
     {
       "subpath": ".",
@@ -237,14 +237,14 @@
       "subpath": ".",
       "name": "DATE_TEXT_OPERATIONS",
       "kind": "variable",
-      "signature": "export declare const DATE_TEXT_OPERATIONS: readonly ['parseDate', 'parseDateTime', 'parseZoned', 'parseISO'];",
+      "signature": "export declare const DATE_TEXT_OPERATIONS: readonly ['parseDate', 'parseDateTime', 'parseZoned', 'parseISO', 'parseDuration'];",
       "jsdocSummary": "The parsing operations that return {@link InvalidDateText}. Written once; the union below comes from it."
     },
     {
       "subpath": ".",
       "name": "DATE_TEXT_REASONS",
       "kind": "variable",
-      "signature": "export declare const DATE_TEXT_REASONS: readonly ['no_match', 'trailing_text', 'conflicting_tokens', 'invalid_date', 'invalid_time', 'invalid_wall_time', 'weekday_mismatch', 'offset_out_of_range', 'not_iso'];",
+      "signature": "export declare const DATE_TEXT_REASONS: readonly ['no_match', 'trailing_text', 'conflicting_tokens', 'invalid_date', 'invalid_time', 'invalid_wall_time', 'weekday_mismatch', 'offset_out_of_range', 'not_iso', 'invalid_duration'];",
       "jsdocSummary": "Why the text was refused. Written once; the union below comes from it."
     },
     {
@@ -385,7 +385,7 @@
       "name": "duration",
       "kind": "function",
       "signature": "export declare function duration(input: string | Amount | Duration): Duration;",
-      "jsdocSummary": "A `Duration` from an ISO 8601 string (`P1DT2H`), an `Amount` (quarters become 3 months) or a `Duration` (returned as-is)."
+      "jsdocSummary": "A `Duration` from an ISO 8601 string (`P1DT2H`), an `Amount` (quarters become 3 months) or a `Duration` (returned as-is). A bad string throws `RangeError`: read text from outside with {@link parseDuration} instead."
     },
     {
       "subpath": ".",
@@ -1103,6 +1103,13 @@
     },
     {
       "subpath": ".",
+      "name": "parseDuration",
+      "kind": "function",
+      "signature": "export declare function parseDuration(text: string): Duration | InvalidDateText;",
+      "jsdocSummary": "A `Duration` read from outside ISO 8601 text such as `P1DT2H`, or an `InvalidDateText` failure (`data.operation` `'parseDuration'`, `data.reason` `'invalid_duration'`) when the text is not a duration."
+    },
+    {
+      "subpath": ".",
       "name": "parseISO",
       "kind": "function",
       "signature": "export declare function parseISO(text: string, options?: ParseISOOptions): Instant | InvalidDateText | UnknownTimeZone;",
@@ -1617,7 +1624,7 @@
       "name": "weekRulesFor",
       "kind": "function",
       "signature": "export declare function weekRulesFor(locale: string, fallback?: WeekRules): WeekRules;",
-      "jsdocSummary": "The week rules a locale uses, from `Intl.Locale` week info (`en-US` → Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO weeks by default."
+      "jsdocSummary": "The week rules a locale uses, from `Intl.Locale` week info (`en-US` → Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO weeks by default. A malformed tag (`'not a locale!'`) is read as the default locale, `en-US`, and logged at DEBUG."
     },
     {
       "subpath": ".",
@@ -1876,7 +1883,7 @@
       "name": "weekRulesFor",
       "kind": "function",
       "signature": "export declare function weekRulesFor(locale: string, fallback?: WeekRules): WeekRules;",
-      "jsdocSummary": "The week rules a locale uses, from `Intl.Locale` week info (`en-US` → Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO weeks by default."
+      "jsdocSummary": "The week rules a locale uses, from `Intl.Locale` week info (`en-US` → Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO weeks by default. A malformed tag (`'not a locale!'`) is read as the default locale, `en-US`, and logged at DEBUG."
     },
     {
       "subpath": "./calendar",
@@ -2247,7 +2254,7 @@
       "name": "duration",
       "kind": "function",
       "signature": "export declare function duration(input: string | Amount | Duration): Duration;",
-      "jsdocSummary": "A `Duration` from an ISO 8601 string (`P1DT2H`), an `Amount` (quarters become 3 months) or a `Duration` (returned as-is)."
+      "jsdocSummary": "A `Duration` from an ISO 8601 string (`P1DT2H`), an `Amount` (quarters become 3 months) or a `Duration` (returned as-is). A bad string throws `RangeError`: read text from outside with {@link parseDuration} instead."
     },
     {
       "subpath": "./duration",
@@ -2353,6 +2360,13 @@
       "kind": "type",
       "signature": "export type NormalizeOptions = Readonly<{ largestUnit: DurationUnit; smallestUnit?: DurationUnit; relativeTo?: PlainDate | ZonedDateTime; /** Temporal's default (`halfExpand`) when omitted. */ roundingMode?: RoundingMode; }>;",
       "jsdocSummary": ""
+    },
+    {
+      "subpath": "./duration",
+      "name": "parseDuration",
+      "kind": "function",
+      "signature": "export declare function parseDuration(text: string): Duration | InvalidDateText;",
+      "jsdocSummary": "A `Duration` read from outside ISO 8601 text such as `P1DT2H`, or an `InvalidDateText` failure (`data.operation` `'parseDuration'`, `data.reason` `'invalid_duration'`) when the text is not a duration."
     },
     {
       "subpath": "./duration",

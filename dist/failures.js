@@ -9,7 +9,7 @@
 import { defineFailure } from '@arki/failure';
 import { is, recordSchema } from '@arki/schema';
 /** The parsing operations that return {@link InvalidDateText}. Written once; the union below comes from it. */
-export const DATE_TEXT_OPERATIONS = ['parseDate', 'parseDateTime', 'parseZoned', 'parseISO'];
+export const DATE_TEXT_OPERATIONS = ['parseDate', 'parseDateTime', 'parseZoned', 'parseISO', 'parseDuration'];
 /** Why the text was refused. Written once; the union below comes from it. */
 export const DATE_TEXT_REASONS = [
     'no_match',
@@ -21,6 +21,7 @@ export const DATE_TEXT_REASONS = [
     'weekday_mismatch',
     'offset_out_of_range',
     'not_iso',
+    'invalid_duration',
 ];
 /** Why a native `Date` is not a calendar date. */
 export const NATIVE_DATE_REASONS = ['invalid_date'];

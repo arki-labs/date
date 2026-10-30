@@ -1,6 +1,6 @@
 {
   "name": "@arki/date",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Date and time math for ARKI — Temporal-based calendar dates, instants, zoned date-times, durations and interval algebra with a small, explicit API. Runs on Node, Bun, Deno, browsers and edge runtimes.",
   "license": "MIT",
   "repository": {
@@ -145,6 +145,7 @@
   "dependencies": {
     "@arki/clock": "0.2.0",
     "@arki/failure": "0.3.0",
+    "@arki/log": "0.4.0",
     "@arki/schema": "0.3.0",
     "temporal-polyfill": "1.0.5"
   },

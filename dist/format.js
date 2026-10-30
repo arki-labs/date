@@ -20,10 +20,10 @@ import { toISO } from './core.js';
 import { remember } from './internal/cache.js';
 import { civilFromDays, dayOfYearOf, daysFromCivil, isoWeekOf, MS_PER_DAY, weekdayOfDays } from './internal/civil.js';
 import { dateTimeFormat } from './internal/intl.js';
+import { resolveLocale } from './internal/locale.js';
 import { offsetAt } from './internal/offsets.js';
 import { systemTimeZone } from './interop.js';
 import { isInstant, isPlainDate, isPlainDateTime, isZonedDateTime, Temporal } from './types.js';
-const DEFAULT_LOCALE = 'en-US';
 function kindName(value) {
     if (isPlainDate(value))
         return 'PlainDate';
@@ -491,7 +491,7 @@ function unquote(chunk) {
  * throw `RangeError`.
  */
 export function format(value, pattern, options) {
-    const locale = options?.locale ?? DEFAULT_LOCALE;
+    const locale = resolveLocale(options?.locale);
     const compiled = compilePattern(pattern);
     const fields = toFields(value, options?.timeZone, compiled.nanos);
     let text = '';
@@ -524,7 +524,8 @@ const TIME_OPTIONS = [
  * A `timeZone` option on a `PlainDate`/`PlainDateTime` throws.
  */
 export function formatIntl(value, options) {
-    const { locale = DEFAULT_LOCALE, timeZone, ...intl } = options ?? {};
+    const { locale: requested, timeZone, ...intl } = options ?? {};
+    const locale = resolveLocale(requested);
     const subject = toSubject(value, timeZone, 'formatIntl');
     if (isZonedDateTime(subject)) {
         return dateTimeFormat(locale, { ...intl, timeZone: subject.timeZoneId }).format(subject.epochMilliseconds);
@@ -556,7 +557,8 @@ function rangeFormatter(formatter) {
  * Engines without `formatRange` (Hermes V1) throw a `RangeError`.
  */
 export function formatRange(start, end, options) {
-    const { locale = DEFAULT_LOCALE, timeZone, ...intl } = options ?? {};
+    const { locale: requested, timeZone, ...intl } = options ?? {};
+    const locale = resolveLocale(requested);
     const from = toSubject(start, timeZone, 'formatRange');
     const to = toSubject(end, timeZone, 'formatRange');
     if (isZonedDateTime(from) && isZonedDateTime(to)) {

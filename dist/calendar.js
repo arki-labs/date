@@ -5,6 +5,7 @@
 import { plainDate } from './core.js';
 import { epochDaysOf, weekOfDays } from './internal/buckets.js';
 import { daysBetween } from './internal/days.js';
+import { resolveLocale } from './internal/locale.js';
 import { startOfWeekDate } from './internal/week.js';
 import { ISO_WEEK, Temporal } from './types.js';
 const JDN_2000_01_01 = 2_451_545;
@@ -178,12 +179,13 @@ function isMinimalDays(n) {
  * The week rules a locale uses, from `Intl.Locale` week info (`en-US` →
  * Sunday start, week 1 holds January 1; `de-DE` → ISO). Runtimes without week
  * info (Node ≤ 22), or no `Intl.Locale` at all (Hermes), get `fallback`, ISO
- * weeks by default.
+ * weeks by default. A malformed tag (`'not a locale!'`) is read as the default
+ * locale, `en-US`, and logged at DEBUG.
  */
 export function weekRulesFor(locale, fallback = ISO_WEEK) {
     if (typeof Reflect.get(Intl, 'Locale') !== 'function')
         return fallback;
-    const tag = new Intl.Locale(locale);
+    const tag = new Intl.Locale(resolveLocale(locale));
     // `getWeekInfo()` is the standard method; JavaScriptCore shipped it first as a `weekInfo` accessor.
     const info = typeof tag.getWeekInfo === 'function' ? tag.getWeekInfo() : Reflect.get(tag, 'weekInfo');
     if (typeof info !== 'object' || info === null)

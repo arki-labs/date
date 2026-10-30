@@ -15,6 +15,7 @@ import { isFuture as isFutureAt, isPast as isPastAt, isToday as isTodayAt, now a
 import { clamp, compareAsc, equals, isAfter, isBefore, isBetween, isSame, isSameOrAfter, isSameOrBefore, sameInstant, } from './compare.js';
 import { zoned } from './core.js';
 import { format, formatIntl } from './format.js';
+import { resolveLocale } from './internal/locale.js';
 import { systemTimeZone, toDate } from './interop.js';
 import { add, ceil, diff, diffElapsed, endOf, floor, nextBoundary, parts, round, set, startOf, sub, until, } from './math.js';
 import { relative } from './relative.js';
@@ -319,7 +320,7 @@ _a = DateValue;
 function settingsFor(options, fallbackZone) {
     return {
         timeZone: options?.timeZone ?? fallbackZone ?? systemTimeZone(),
-        locale: options?.locale ?? 'en-US',
+        locale: resolveLocale(options?.locale),
         week: options?.week ?? ISO_WEEK,
         clock: options?.clock ?? new SystemClock(),
     };

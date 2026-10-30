@@ -12,6 +12,7 @@
 import { now } from './clock.js';
 import { instant } from './core.js';
 import { relativeTimeFormat } from './internal/intl.js';
+import { resolveLocale } from './internal/locale.js';
 import { systemTimeZone } from './interop.js';
 import { diff } from './math.js';
 import { isZonedDateTime } from './types.js';
@@ -75,7 +76,7 @@ function formatterFor(locale, numeric, style) {
 /** Locale text for `target` seen from `reference`: "in 3 days", "3 days ago", or "tomorrow" with `numeric: 'auto'`. */
 export function relative(target, reference, options) {
     const { unit, value } = relativeUnit(target, reference, options);
-    const formatter = formatterFor(options?.locale ?? 'en-US', options?.numeric ?? 'always', options?.style ?? 'long');
+    const formatter = formatterFor(resolveLocale(options?.locale), options?.numeric ?? 'always', options?.style ?? 'long');
     return formatter.format(value, unit);
 }
 /** `relative(target, now({ clock }))`. Pass a `MockClock` for deterministic output. */
