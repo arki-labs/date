@@ -1,4 +1,4 @@
-Read-only mirror of `@arki/date` v0.5.0. Source and issues: arki-labs/arki. Docs: https://arki.dev/packages/date. Published 2026-10-30 with provenance https://www.npmjs.com/package/@arki/date/v/0.5.0#provenance.
+Read-only mirror of `@arki/date` v0.5.1. Source and issues: arki-labs/arki. Docs: https://arki.dev/packages/date. Published 2026-11-09 with provenance https://www.npmjs.com/package/@arki/date/v/0.5.1#provenance.
 
 # @arki/date
 
@@ -72,11 +72,11 @@ Runs on Node 22+, Bun, Deno, browsers and edge runtimes: ECMAScript and `Intl` o
 <!-- runtimes:start -->
 | Runtime | Result | Version tested | Date (UTC) |
 | --- | --- | --- | --- |
-| node | pass | v26.11.1 | 2026-10-17 |
-| bun | pass | 1.4.2 | 2026-10-17 |
-| deno | pass | 2.9.7 | 2026-10-17 |
-| browser | pass | Chromium 156.0.8078.4 | 2026-10-17 |
-| hermes | not run | - | 2026-10-17 |
+| node | pass | v22.13.1 | 2026-11-05 |
+| bun | pass | 1.4.2 | 2026-11-05 |
+| deno | pass | 2.9.8 | 2026-11-05 |
+| browser | pass | Chromium 156.0.8078.4 | 2026-11-05 |
+| hermes | pass | V1 250829098.0.17 | 2026-11-05 |
 <!-- runtimes:end -->
 
 ## Public imports
@@ -131,6 +131,10 @@ try {
   if (!(error instanceof RangeError)) throw error;
 }
 ```
+
+## Observability
+
+Pure computation: no I/O, so no spans or metrics.
 
 ## Limits
 
