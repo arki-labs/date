@@ -1,6 +1,6 @@
 {
   "package": "@arki/date",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "entries": [
     {
       "subpath": ".",
